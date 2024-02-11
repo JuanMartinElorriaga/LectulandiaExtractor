@@ -1,40 +1,63 @@
-from queue import Queue
-from threading import Thread
-import werkzeug
-werkzeug.cached_property = werkzeug.utils.cached_property
-from robobrowser import RoboBrowser
-import re
-import time
-from requests import Session
-
 class Downloader():
     def __init__(self, proxy=None, worker_num=0):
         self.worker_num = worker_num
         session         = Session()
         if proxy is not None:
             session.proxies = {'http': proxy, 'https': proxy}
-        self.browser    = RoboBrowser(history=True, parser='html.parser', session=session)
+        self.browser = RoboBrowser(history=True, parser='html.parser', session=session)
+
+    def get_author_url(self, author):
+        ''' Get author url from input given '''
+        author_name = author.replace(" ", "-").lower()
+        author_url  = f'https://ww3.lectulandia.com/autor/{author_name}'
+        return author_url
+
+    def get_books_titles_from_author_url(self, author_url):
+        self.browser.open(author_url)
+        books_titles_from_author = [
+            f"{book['title']}"
+            for book in self.browser.find_all("a", class_="title")]
+        print(f'Number of titles retrieved: {len(books_titles_from_author)}')
+        return books_titles_from_author
+
+    def get_urls_from_author_url(self, author_url):
+        self.browser.open(author_url)
+        urls_from_author = [
+            f"https://ww3.lectulandia.com{book['href']}"
+            for book in self.browser.find_all("a", class_="card-click-target")]
+        return urls_from_author
+
 
     def get_download_link(self, book_url):
         self.browser.open(book_url)
         for link in self.browser.find_all("a"):
             if "download.php?t=1" in str(link):
-                return f"https://www.lectulandia.cc{link['href']}"
+                return f"https://www.lectulandia.com{link['href']}"
+
+
+    def get_batch_download_links(self, urls_from_author):
+        download_links = [self.get_download_link(book_url) for book_url in urls_from_author]
+        return download_links
+
 
     def download_book(self, download_url):
         self.browser.open(download_url)
         pattern = re.compile("var linkCode = \"(.*?)\";")
         section = pattern.findall(str(self.browser.parsed))
-        bee_url = f'https://www.beeupload.net/file/{section[0]}'
-        self.browser.open(bee_url)
+        ant_url = f'https://www.antupload.com/file/{section[0]}'
+        print(ant_url)
+        self.browser.open(ant_url)
+        print('opened')
         try:
             filename = self.browser.find(
                 "div", id="fileDescription").find_all("p")[1].text.replace(
                     "Name: ", "")
+            print(filename)
 
             size = self.browser.find(
                 "div", id="fileDescription").find_all("p")[2].text
             file_url = self.browser.find("a", id="downloadB")
+            print(size)
             time.sleep(2)
             self.browser.follow_link(file_url)
             with open(f"books/{filename}", "wb") as epub_file:
@@ -43,21 +66,21 @@ class Downloader():
         except:
             print(self.browser.parsed)
 
-    def get_book_page_list(self, page):
-        self.browser.open(f'https://www.lectulandia.cc/book/page/{page}/')
+
+    def get_book_page_list(self, page:int):
+        self.browser.open(f'https://ww3.lectulandia.com/book/page/{page}/')
         return [
             f"https://www.lectulandia.cc{book['href']}"
             for book in self.browser.find_all("a", class_="card-click-target")
         ]
 
-    def download_full_page(self, page):
+    def download_full_page(self, page:int):
         print(f"Downloading page: {page} ")
         books = self.get_book_page_list(page)
         for book in books:
             time.sleep(2)
             download_url = self.get_download_link(book)
             print(f"Worker: {self.worker_num} on page: {page}", self.download_book(download_url))
-
 
 class Worker(Thread):
     def __init__(self, queue, worker_number, proxy=None):
@@ -89,7 +112,3 @@ def main():
         queue.put(page)
 
     queue.join()
-
-
-if __name__ == '__main__':
-    main()
