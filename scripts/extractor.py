@@ -1,5 +1,7 @@
 from queue import Queue
 from threading import Thread
+import werkzeug
+werkzeug.cached_property = werkzeug.utils.cached_property
 from robobrowser import RoboBrowser
 import re
 import time
@@ -8,10 +10,10 @@ from requests import Session
 class Downloader():
     def __init__(self, proxy=None, worker_num=0):
         self.worker_num = worker_num
-        session = Session()
+        session         = Session()
         if proxy is not None:
             session.proxies = {'http': proxy, 'https': proxy}
-        self.browser = RoboBrowser(history=True, parser='html.parser', session=session)
+        self.browser    = RoboBrowser(history=True, parser='html.parser', session=session)
 
     def get_download_link(self, book_url):
         self.browser.open(book_url)
@@ -60,9 +62,9 @@ class Downloader():
 class Worker(Thread):
     def __init__(self, queue, worker_number, proxy=None):
         Thread.__init__(self)
-        self.queue = queue
+        self.queue      = queue
         self.downloader = Downloader(proxy)
-        self.wrk_num = worker_number
+        self.wrk_num    = worker_number
 
     def run(self):
         while True:
@@ -75,9 +77,9 @@ class Worker(Thread):
 
 
 def main():
-    pages = [x + 1 for x in range(8)]
-    proxies = [None, "https://188.168.75.254:56899"]
-    queue = Queue()
+    pages   = [x + 1 for x in range(8)]
+    proxies = None#[None, "https://188.168.75.254:56899"]
+    queue   = Queue()
     for x in range(2):
         worker = Worker(queue, x, proxies[x])
         worker.daemon = True
