@@ -1,10 +1,17 @@
 # LectulandiaExtractor
-Code for downloading books from [Lectulandia](https://ww3.lectulandia.com/) domain.
+Repo para descargar libros en español programáticamente desde el dominio [Lectulandia](https://ww3.lectulandia.com/).
 
 
 ## Scripts
-- `extractor.py`: original script
-    Uses Robobrowser, that uses BeautifulSoup from behind the curtains
-    Replace `library_folder` in `download_book()` with desired local path
+- `extractor.py`: script de descarga de archivos
+    - Utiliza *Robobrowser*, que maneja *BeautifulSoup* por detrás
+    - Reemplazar `library_folder` en `download_book()` con el path deseado. Se recomienda utilizar el mismo path que la *Calibre Library* en caso de existir.
 
-Forked from [LectulandiaExtractor](https://github.com/Sarrablo/LectulandiaExtractor)
+Forked desde repo original [LectulandiaExtractor](https://github.com/Sarrablo/LectulandiaExtractor).
+
+
+### TODO
+- Si el autor posee mas de una pagina, descargarlas todas, no solamente la primera
+- Agregar errores, por ejemplo cuando el autor no se encuentra en la base
+- Armar log file de fallos
+- Aplicar multi-thread a la descarga en batch
