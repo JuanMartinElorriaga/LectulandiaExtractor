@@ -7,7 +7,7 @@ werkzeug.cached_property = werkzeug.utils.cached_property
 from robobrowser import RoboBrowser
 import requests
 from unidecode import unidecode
-from retrying import retry
+import random
 
 # Set logging to log into an external file as well as stream in the console
 import logging
@@ -25,13 +25,25 @@ logging.getLogger().addHandler(console_handler)
 
 class Downloader():
     def __init__(self, proxy=None):
-        session         = requests.Session()
+        # Header rotation
+        self.user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/91.0.864.37",
+        ]
+        self.current_user_agent = random.choice(self.user_agents)
+        session = requests.Session()
         session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            })
+            'User-Agent': self.current_user_agent
+        })
         if proxy is not None:
             session.proxies = {'http': proxy, 'https': proxy}
         self.browser = RoboBrowser(history=True, parser='html.parser', session=session)
+
+
+    def rotate_user_agent(self):
+        ''' Rotate to the next User-Agent in the list '''
+        self.current_user_agent = random.choice(self.user_agents)
 
 
     def get_author_url(self, author:str):
@@ -57,6 +69,8 @@ class Downloader():
             f"{book['title']}"
             for book in self.browser.find_all("a", class_="title")]
         logging.info(f'Number of titles retrieved: {len(books_titles_from_author)}')
+        # Rotate User-Agent after making the request
+        self.rotate_user_agent()
         return books_titles_from_author
 
 
@@ -74,6 +88,11 @@ class Downloader():
             next_page_url = f"https://ww3.lectulandia.com{next_page_link['href']}"
             # Recursive call as long as there is a "Siguiente" button
             self.get_urls_from_author_url(next_page_url, urls_from_author)
+
+        # Rotate User-Agent after making the request
+        self.rotate_user_agent()
+        if not urls_from_author:
+            raise Exception("There are no URLs for this author! Try a different one")
         return urls_from_author
 
 
@@ -90,7 +109,6 @@ class Downloader():
         download_links = [self.get_download_link(book_url) for book_url in urls_from_author]
         return download_links
 
-    @retry(wait_exponential_multiplier=1000, wait_exponential_max=10000)
     def download_book(self, download_url:str, author:str, timeout=180):
         ''' Download a book and save into local directory if not exists already '''
         library_folder = "F:\Calibre Library" # Modify if necessary
@@ -100,10 +118,12 @@ class Downloader():
             if not os.path.exists(author_folder):
                 os.makedirs(author_folder)
             logging.info(f'Downloading book from {download_url}')
+            self.rotate_user_agent()  # Rotate headers before making the request
             self.browser.open(download_url)
             pattern = re.compile("var linkCode = \"(.*?)\";")
             section = pattern.findall(str(self.browser.parsed))
             ant_url = f'https://www.antupload.com/file/{section[0]}'
+            logging.info(f'antupload: {ant_url}')
             self.browser.open(ant_url)
             filename = self.browser.find(
                 "div", id="fileDescription").find_all("p")[1].text.replace(
@@ -113,23 +133,28 @@ class Downloader():
                 "div", id="fileDescription").find_all("p")[2].text
             file_url = self.browser.find("a", id="downloadB")
             logging.info(size)
+            #logging.info(f'{file_url}')
             # Check if the file already exists in the target directory
             file_path = os.path.join(author_folder, filename)
             if os.path.exists(file_path):
                 logging.info(f'File already exists: {file_path}')
                 return None
-            self.browser.follow_link(file_url, timeout=timeout)
-            with open(file_path, "wb") as epub_file:
-                epub_file.write(self.browser.response.content)
-                logging.info(f'File has been saved to: {epub_file.name}')
-                return filename, size
-
+            if file_url:
+                self.browser.follow_link(file_url, timeout=timeout)
+                with open(file_path, "wb") as epub_file:
+                    epub_file.write(self.browser.response.content)
+                    logging.info(f'File has been saved to: {epub_file.name}')
+                    return filename, size
+            else:
+                logging.error(f'Error downloading book: Unable to retrieve download link')
+                return None
         except requests.exceptions.Timeout:
             logging.error(f'Timeout error during download. URL: {download_url}')
             return None
         except Exception as e:
             logging.error(f'Error downloading book: {str(e)}')
             return None
+
 
     def batch_download_books(self, urls_from_author:list, author:str):
         ''' Download all book collection from a given author'''
