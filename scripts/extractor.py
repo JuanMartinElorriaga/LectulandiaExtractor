@@ -7,6 +7,7 @@ werkzeug.cached_property = werkzeug.utils.cached_property
 from robobrowser import RoboBrowser
 import requests
 from unidecode import unidecode
+from retrying import retry
 
 # Set logging to log into an external file as well as stream in the console
 import logging
@@ -23,8 +24,7 @@ console_handler.setFormatter(console_formatter)
 logging.getLogger().addHandler(console_handler)
 
 class Downloader():
-    def __init__(self, proxy=None, worker_num=0):
-        self.worker_num = worker_num
+    def __init__(self, proxy=None):
         session         = requests.Session()
         session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -34,20 +34,23 @@ class Downloader():
         self.browser = RoboBrowser(history=True, parser='html.parser', session=session)
 
 
-    def get_author_url(self, author):
+    def get_author_url(self, author:str):
         ''' Get author url from author name given as input '''
+        # Input validation
+        if not author or not isinstance(author, str):
+            raise ValueError("Author name must be a non-empty string")
         # Check if base url is active
-        base_url = 'https://ww3.lectulandia.com/autor/'
+        base_url = 'https://ww3.lectulandia.com/'
         response = requests.head(base_url)
         if response.status_code != 200:
             raise requests.ConnectionError("Base URL is not active. Please set a different base URL")
         # Create author url
         author_name = author.replace(" ", "-").lower()
-        author_url  = f'https://ww3.lectulandia.com/autor/{author_name}'
+        author_url  = f'{base_url}autor/{author_name}'
         return author_url
 
 
-    def get_books_titles_from_author_url(self, author_url):
+    def get_books_titles_from_author_url(self, author_url:str):
         ''' Get book titles from a given author url '''
         self.browser.open(author_url)
         books_titles_from_author = [
@@ -57,7 +60,7 @@ class Downloader():
         return books_titles_from_author
 
 
-    def get_urls_from_author_url(self, author_url, urls_from_author=None):
+    def get_urls_from_author_url(self, author_url:str, urls_from_author=None):
         ''' Get list of book links from a given author'''
         if urls_from_author is None:
             urls_from_author = []
@@ -74,7 +77,7 @@ class Downloader():
         return urls_from_author
 
 
-    def get_download_link(self, book_url):
+    def get_download_link(self, book_url:str):
         ''' Turn book link into a download url '''
         self.browser.open(book_url)
         for link in self.browser.find_all("a"):
@@ -82,16 +85,17 @@ class Downloader():
                 return f"https://www.lectulandia.com{link['href']}"
 
 
-    def get_batch_download_links(self, urls_from_author):
+    def get_batch_download_links(self, urls_from_author:list):
         ''' Get whole list of links to download from a given author '''
         download_links = [self.get_download_link(book_url) for book_url in urls_from_author]
         return download_links
 
-
-    def download_book(self, download_url, author, timeout=180):
+    @retry(wait_exponential_multiplier=1000, wait_exponential_max=10000)
+    def download_book(self, download_url:str, author:str, timeout=180):
         ''' Download a book and save into local directory if not exists already '''
         library_folder = "F:\Calibre Library" # Modify if necessary
-        author_folder  = os.path.join(library_folder, author)
+        author_name    = unidecode(author.title()) # Clean format
+        author_folder  = os.path.join(library_folder, author_name)
         try:
             if not os.path.exists(author_folder):
                 os.makedirs(author_folder)
@@ -127,7 +131,7 @@ class Downloader():
             logging.error(f'Error downloading book: {str(e)}')
             return None
 
-    def batch_download_books(self, urls_from_author, author):
+    def batch_download_books(self, urls_from_author:list, author:str):
         ''' Download all book collection from a given author'''
         for url in urls_from_author:
             self.download_book(url, author)
@@ -136,11 +140,13 @@ class Downloader():
 
     def get_book_page_list(self, page:int):
         ''' Get list of book titles from a given page number '''
-        self.browser.open(f'https://ww3.lectulandia.com/book/page/{page}/')
-        return [
+        page_url = f'https://ww3.lectulandia.com/book/page/{page}/'
+        self.browser.open(page_url)
+        logging.info(f'Getting book page list from {page_url}')
+        book_page_list = [
             f"https://ww3.lectulandia.com{book['href']}"
-            for book in self.browser.find_all("a", class_="card-click-target")
-        ]
+            for book in self.browser.find_all("a", class_="card-click-target")]
+        return book_page_list
 
 
     def download_full_page(self, page:int):
@@ -151,6 +157,5 @@ class Downloader():
             for book in books:
                 time.sleep(1)
                 download_url = self.get_download_link(book)
-                logging.info(f"Worker: {self.worker_num} on page: {page}", self.download_book(download_url))
         except Exception as e:
             logging.error(f'Error downloading full page: {str(e)}')
