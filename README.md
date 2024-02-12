@@ -3,7 +3,7 @@ Repo para descargar libros en español programáticamente desde el dominio [Lect
 
 
 ## Descripción
-El programa actualmente permite, a partir de un autor dado, descargar la totalidad de libros *epub* presentes en [Lectulandia](https://ww3.lectulandia.com/).
+El programa actualmente permite, a partir de un autor dado, descargar la totalidad de libros *epub* presentes en [Lectulandia](https://ww3.lectulandia.com/). También es posible descargar la totalidad de libros presentes en una página (page) en particular.
 El código se trata de un scrapper basado en *Robobrowser*, el cual maneja *BeautifulSoup* por detrás para navegar y seleccionar el contenido de la página web.
 
 La función de descarga posee además un paginador, de forma tal que no solo se descargue la primera página visible en la interfaz, sino la totalidad de páginas.
