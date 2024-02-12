@@ -110,6 +110,7 @@ class Downloader():
         download_links = [self.get_download_link(book_url) for book_url in urls_from_author]
         return download_links
 
+
     def download_book(self, download_url:str, author:str, timeout=180):
         ''' Download a book and save into local directory if not exists already '''
         library_folder = self.library_folder

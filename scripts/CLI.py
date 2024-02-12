@@ -18,9 +18,9 @@ def main(author, proxy, output_dir):
         download_links = downloader.get_batch_download_links(urls_from_author)
         click.echo(f'Total download links found for {author}: {len(download_links)}')
 
-        click.confirm('Do you want to start downloading the books?', abort=True, default=True)
+        if not click.confirm('Do you want to start downloading the books?', default=True):
+            raise click.Abort("Download aborted by user.")
 
-        downloader.batch_download_books(download_links, author)
         click.echo('Download completed successfully!')
 
     except Exception as e:
