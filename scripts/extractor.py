@@ -24,7 +24,8 @@ console_handler.setFormatter(console_formatter)
 logging.getLogger().addHandler(console_handler)
 
 class Downloader():
-    def __init__(self, proxy=None):
+    def __init__(self, proxy=None, library_folder=r'F:\Calibre Library'):
+        self.library_folder = library_folder
         # Header rotation
         self.user_agents = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
@@ -111,7 +112,7 @@ class Downloader():
 
     def download_book(self, download_url:str, author:str, timeout=180):
         ''' Download a book and save into local directory if not exists already '''
-        library_folder = "F:\Calibre Library" # Modify if necessary
+        library_folder = self.library_folder
         author_name    = unidecode(author.title()) # Clean format
         author_folder  = os.path.join(library_folder, author_name)
         try:

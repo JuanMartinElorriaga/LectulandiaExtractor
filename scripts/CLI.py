@@ -4,8 +4,9 @@ from extractor import Downloader
 @click.command()
 @click.option('--author', prompt='Enter the author name', help='Author name to download books from')
 @click.option('--proxy', default=None, help='Proxy to be used for the requests')
-def main(author, proxy):
-    downloader = Downloader(proxy=proxy)
+@click.option('--output-dir', default=r'F:\Calibre Library', help='Directory to save downloaded books')
+def main(author, proxy, output_dir):
+    downloader = Downloader(proxy=proxy, library_folder=output_dir)
 
     try:
         author_url = downloader.get_author_url(author)
