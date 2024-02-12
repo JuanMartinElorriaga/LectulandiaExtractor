@@ -16,8 +16,6 @@ Forked desde repo original [LectulandiaExtractor](https://github.com/Sarrablo/Le
 
 
 ### TODO
-- Agregar strings de descripción de las funciones
-- Agregar funcionalidad para descargar un único libro, en lugar de toda la colección del autor
-- Mejorar el sistema de búsqueda de autor para los casos de match parcial.
 - Armar una GUI con Tkinter, PyQt o Kivy.
-- Agregar queues???
+- Mejorar el sistema de búsqueda de autor para los casos de match parcial.
+- Agregar funcionalidad para descargar un único libro, en lugar de toda la colección del autor
