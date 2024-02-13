@@ -16,7 +16,14 @@ La función de descarga posee además un paginador, de forma tal que no solo se 
 ## Scripts
 - `extractor.py`: script de descarga de archivos
 - `CLI.py`: Command Line Interface para correr el código a través de la terminal.
+    - `--author`: Nombre de autor desde el cual descargar libros
+    - `--proxy`: Proxy para los requests
+    - `--output-dir`: Directorio local en donde descargar los libros
+
 Para ejecutar la CLI, simplemente dirigirse a `/scripts` y correr:
  ```bash
  python CLI.py
  ```
+
+### TODO
+-  Resolver problema de que a partir de cierta número de descargas, el scripts comienza a devolver None y las descargas comienzan a fallar. Mientras tanto, es necesario esperar unos minutos y volver a comenzar.

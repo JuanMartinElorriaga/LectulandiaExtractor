@@ -51,12 +51,12 @@ class Downloader():
         ''' Get author url from author name given as input '''
         # Input validation
         if not author or not isinstance(author, str):
-            raise ValueError("Author name must be a non-empty string")
+            raise ValueError("El autor debe ser una string no nula")
         # Check if base url is active
         base_url = 'https://ww3.lectulandia.com/'
         response = requests.head(base_url)
         if response.status_code != 200:
-            raise requests.ConnectionError("Base URL is not active. Please set a different base URL")
+            raise requests.ConnectionError("La URL no se encuentra activa. Por favor, setear una diferente.")
         # Create author url
         author_name = author.replace(" ", "-").lower()
         author_url  = f'{base_url}autor/{author_name}'
@@ -69,7 +69,7 @@ class Downloader():
         books_titles_from_author = [
             f"{book['title']}"
             for book in self.browser.find_all("a", class_="title")]
-        logging.info(f'Number of titles retrieved: {len(books_titles_from_author)}')
+        logging.info(f'Cantidad de libros obtenidos: {len(books_titles_from_author)}')
         # Rotate User-Agent after making the request
         self.rotate_user_agent()
         return books_titles_from_author
@@ -93,7 +93,7 @@ class Downloader():
         # Rotate User-Agent after making the request
         self.rotate_user_agent()
         if not urls_from_author:
-            raise Exception("There are no URLs for this author! Try a different one")
+            raise Exception("No hay URLs para este autor! Intentar un autor distinto.")
         return urls_from_author
 
 
@@ -119,7 +119,7 @@ class Downloader():
         try:
             if not os.path.exists(author_folder):
                 os.makedirs(author_folder)
-            logging.info(f'Downloading book from {download_url}')
+            logging.info(f'Descagando desde {download_url}')
             self.rotate_user_agent()  # Rotate headers before making the request
             self.browser.open(download_url)
             pattern = re.compile("var linkCode = \"(.*?)\";")
@@ -130,7 +130,7 @@ class Downloader():
             filename = self.browser.find(
                 "div", id="fileDescription").find_all("p")[1].text.replace(
                     "Name: ", "")
-            logging.info(f"Filename: {filename}")
+            logging.info(f"Nombre de archivo: {filename}")
             size = self.browser.find(
                 "div", id="fileDescription").find_all("p")[2].text
             file_url = self.browser.find("a", id="downloadB")
@@ -145,16 +145,16 @@ class Downloader():
                 self.browser.follow_link(file_url, timeout=timeout)
                 with open(file_path, "wb") as epub_file:
                     epub_file.write(self.browser.response.content)
-                    logging.info(f'File has been saved to: {epub_file.name}')
+                    logging.info(f'El archivo ha sido descargado en: {epub_file.name}')
                     return filename, size
             else:
-                logging.error(f'Error downloading book: Unable to retrieve download link')
+                logging.error(f'Error descargando libro: no ha sido posible encontrar el link de descarga')
                 return None
         except requests.exceptions.Timeout:
-            logging.error(f'Timeout error during download. URL: {download_url}')
+            logging.error(f'Timeout error durante la descarga. URL: {download_url}')
             return None
         except Exception as e:
-            logging.error(f'Error downloading book: {str(e)}')
+            logging.error(f'Error descargando libro: {str(e)}')
             return None
 
 
@@ -169,7 +169,7 @@ class Downloader():
         ''' Get list of book titles from a given page number '''
         page_url = f'https://ww3.lectulandia.com/book/page/{page}/'
         self.browser.open(page_url)
-        logging.info(f'Getting book page list from {page_url}')
+        logging.info(f'Obteniendo lista de libros desde {page_url}')
         book_page_list = [
             f"https://ww3.lectulandia.com{book['href']}"
             for book in self.browser.find_all("a", class_="card-click-target")]
@@ -178,11 +178,11 @@ class Downloader():
 
     def download_full_page(self, page:int):
         ''' Download a full page '''
-        logging.info(f"Downloading page: {page} ")
+        logging.info(f"Descargando página: {page} ")
         try:
             books = self.get_book_page_list(page)
             for book in books:
                 time.sleep(1)
                 download_url = self.get_download_link(book)
         except Exception as e:
-            logging.error(f'Error downloading full page: {str(e)}')
+            logging.error(f'Error descargando página completa: {str(e)}')
