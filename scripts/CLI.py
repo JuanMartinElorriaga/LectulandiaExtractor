@@ -18,11 +18,12 @@ def main(author, proxy, output_dir):
         click.echo(f'Total de links encontrados para {author.title()}: {len(urls_from_author)}')
 
         # Display the list of URLs to the user
-        click.echo('\nLista de libros:')
+        click.echo(click.style('\nLista de libros:', fg='cyan'))
 
         for i, url in enumerate(urls_from_author, start=1):
             book = unquote(urlparse(url).path.strip('/').split('/')[-1]).replace('-', ' ')
-            click.echo(f"{i}. {book}")
+            click.echo(f"{click.style(i, fg='yellow')}. {click.style(book, fg='yellow')}")
+
 
         # Prompt the user to select URLs for download
         selected_indices = click.prompt(
@@ -41,16 +42,16 @@ def main(author, proxy, output_dir):
 
         #click.echo(f'Libros seleccionados: {selected_urls}')
         download_links = downloader.get_batch_download_links(selected_urls)
-        click.echo(f'Total de libros encontrados para {author}: {len(download_links)}')
+        click.echo(f'Total de libros a descargar de {author.title()}: {len(download_links)}')
 
         if not click.confirm('Quieres comenzar con la descarga?', default=True):
             raise click.Abort("Descarga abortada por el usuario.")
 
         downloader.batch_download_books(download_links, author)
-        click.echo('Descarga finalizada!')
+        click.echo(click.style('Descarga finalizada!', fg='green'))
 
     except Exception as e:
-        click.echo(f'Error: {str(e)}')
+        click.echo(click.style(f'Error: {str(e)}', fg='red'))
 
 
 if __name__ == '__main__':
