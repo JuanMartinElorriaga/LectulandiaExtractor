@@ -1,6 +1,12 @@
 # LectulandiaExtractor
 Repo para descargar libros en *español* en formato *epub* programáticamente desde el dominio [Lectulandia](https://ww3.lectulandia.com/).
 
+
+<p align="center" style="font-family: 'Georgia', sans-serif; font-style: italic;">
+  Las personas libres jamás podrán concebir lo que los libros significan para quienes vivimos encerrados
+</p>
+
+
 ---
 
 ## Descripción
