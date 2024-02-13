@@ -6,6 +6,7 @@ Repo para descargar libros en *español* en formato *epub* programáticamente de
 ## Descripción
 El programa permite, a partir de un autor dado, escoger desde la colección de libros del autor existente en [Lectulandia](https://ww3.lectulandia.com/) y descargar los libros escogidos dentro de un directorio local (el cual puede ser modificado a través de la CLI).
 
+>El objetivo es poder facilitar y automatizar el proceso de armado de una biblioteca digital en forma ordenada y rápida
 
 El código se trata de un scrapper basado en *Robobrowser*, el cual maneja *BeautifulSoup* por detrás para navegar y parsear el contenido de la página web.
 
