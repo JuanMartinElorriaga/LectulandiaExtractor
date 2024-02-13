@@ -27,16 +27,11 @@ Para ejecutar la CLI, simplemente dirigirse a `/scripts` y correr:
  python CLI.py
  ```
 
-
 ## Screenshots
-
 
 ![CLI](resources/cli.png)
 ![Local Library Murakami](resources/sample.png)
 
-
-
-
-
-### TODO
--  Resolver problema de que a partir de cierta número de descargas, el scripts comienza a devolver None y las descargas comienzan a fallar. Mientras tanto, es necesario esperar unos minutos y volver a comenzar.
+## Referencias
+- [LectureMap](https://www.literature-map.com/)
+- [AI-Book-Downloader](https://github.com/JuanMartinElorriaga/ai-book-downloader)

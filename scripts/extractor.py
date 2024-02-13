@@ -142,6 +142,7 @@ class Downloader():
                 logging.info(f'File already exists: {file_path}')
                 return None
             if file_url:
+                time.sleep(1)
                 self.browser.follow_link(file_url, timeout=timeout)
                 with open(file_path, "wb") as epub_file:
                     epub_file.write(self.browser.response.content)
