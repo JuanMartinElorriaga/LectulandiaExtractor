@@ -26,17 +26,20 @@ def main(author, proxy, output_dir):
 
         # Prompt the user to select URLs for download
         selected_indices = click.prompt(
-            'Seleccionar libro(s) para descargar (ej., 1,2,3)',
+            'Seleccionar libro(s) para descargar (ej., 1,2,3, o ALL para todos)',
             type         = str,
             default      = 'ALL',
             show_default = True
-        ).split(',')
+        )
 
         # Filter the URLs based on user selection
-        selected_urls = [urls_from_author[int(index) - 1] for index in selected_indices]
+        if selected_indices.upper() == 'ALL':
+            selected_urls = urls_from_author
+        else:
+            selected_indices = selected_indices.split(',')
+            selected_urls    = [urls_from_author[int(index) - 1] for index in selected_indices]
 
         #click.echo(f'Libros seleccionados: {selected_urls}')
-
         download_links = downloader.get_batch_download_links(selected_urls)
         click.echo(f'Total de libros encontrados para {author}: {len(download_links)}')
 
