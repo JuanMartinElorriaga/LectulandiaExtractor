@@ -27,7 +27,10 @@ Para ejecutar la CLI, simplemente dirigirse a `/scripts` y correr:
  ```
 
 
-## Sample
+## Screenshots
+
+
+![CLI](resources/cli.png)
 ![Local Library Murakami](resources/sample.png)
 
 
