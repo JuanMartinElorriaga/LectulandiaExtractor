@@ -1,22 +1,22 @@
 # LectulandiaExtractor
-Repo para descargar libros en español programáticamente desde el dominio [Lectulandia](https://ww3.lectulandia.com/).
+Repo para descargar libros en *español* en formato *epub* programáticamente desde el dominio [Lectulandia](https://ww3.lectulandia.com/).
 
+---
 
 ## Descripción
-El programa actualmente permite, a partir de un autor dado, descargar la totalidad de libros *epub* presentes en [Lectulandia](https://ww3.lectulandia.com/).
+El programa permite, a partir de un autor dado, escoger desde la colección de libros del autor existente en [Lectulandia](https://ww3.lectulandia.com/) y descargar los libros escogidos dentro de un directorio local (el cual puede ser modificado a través de la CLI).
 
-También es posible descargar la totalidad de libros presentes en una página (page) en particular.
 
-El código se trata de un scrapper basado en *Robobrowser*, el cual maneja *BeautifulSoup* por detrás para navegar y seleccionar el contenido de la página web.
+El código se trata de un scrapper basado en *Robobrowser*, el cual maneja *BeautifulSoup* por detrás para navegar y parsear el contenido de la página web.
 
-La función de descarga posee además un paginador, de forma tal que no solo se descargue la primera página visible en la interfaz, sino la totalidad de páginas.
+La función de descarga posee además un paginador, de forma tal que no solo se descargue la primera página del autor visible en la interfaz, sino la totalidad de páginas.
 
-Forked desde repo original [LectulandiaExtractor](https://github.com/Sarrablo/LectulandiaExtractor).
+*Forked* desde repo original [LectulandiaExtractor](https://github.com/Sarrablo/LectulandiaExtractor).
 
 ## Scripts
 - `extractor.py`: script de descarga de archivos
-    - Reemplazar `library_folder` en `download_book()` con el path deseado. Se recomienda utilizar el mismo path que la *Calibre Library* en caso de existir.
-
-
-### TODO
-- Agregar funcionalidad en CLI para elegir lista de libros a bajar
+- `CLI.py`: Command Line Interface para correr el código a través de la terminal.
+Para ejecutar la CLI, simplemente dirigirse a `/scripts` y correr:
+ ```bash
+ python CLI.py
+ ```
