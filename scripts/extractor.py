@@ -112,7 +112,49 @@ class Downloader():
         return download_links
 
 
-    def download_book(self, download_url:str, author:str, timeout:int=180) -> None:
+    def download_cover_google_books(self, title: str, author: str, file_path: str) -> None:
+            """ Descarga portada usando Google Books API según título y autor """
+            try:
+                query = f'intitle:"{title}"+inauthor:"{author}"'
+                url = f'https://www.googleapis.com/books/v1/volumes?q={query}'
+
+                logger.info(f"Consultando Google Books API con: {query}")
+                response = requests.get(url)
+                response.raise_for_status()
+                data = response.json()
+
+                if 'items' not in data or len(data['items']) == 0:
+                    logger.warning(f"No se encontraron resultados para '{title}' de '{author}'")
+                    return
+
+                volume_info = data['items'][0].get('volumeInfo', {})
+                image_links = volume_info.get('imageLinks', {})
+                cover_url = image_links.get('thumbnail') or image_links.get('smallThumbnail')
+
+                if not cover_url:
+                    logger.warning("No se encontró la imagen de portada en los resultados de la API.")
+                    return
+
+                if cover_url.startswith("http://"):
+                    cover_url = cover_url.replace("http://", "https://")
+
+                logger.info(f"Descargando portada desde: {cover_url}")
+                img_response = requests.get(cover_url)
+                img_response.raise_for_status()
+
+                cover_path = os.path.join(os.path.dirname(file_path), "cover.jpg")
+                with open(cover_path, "wb") as f:
+                    f.write(img_response.content)
+
+                logger.info(f"Portada guardada en: {cover_path}")
+
+            except requests.RequestException as e:
+                logger.warning(f"Error en la petición HTTP: {e}")
+            except Exception as e:
+                logger.warning(f"Error al descargar portada: {e}")
+
+
+    def download_book(self, download_url: str, author: str, timeout: int = 180) -> None:
         author_name_cleaned = unidecode(author).strip().lower()
         existing_folder = self._get_existing_author_folder(author_name_cleaned)
 
@@ -132,23 +174,35 @@ class Downloader():
             logger.info(f'antupload: {ant_url}')
             self.browser.open(ant_url)
 
-            filename = self.browser.find("div", id="fileDescription").find_all("p")[1].text.replace("Name: ", "")
+            # Extraer nombre y tamaño del archivo
+            raw_filename = self.browser.find("div", id="fileDescription").find_all("p")[1].text.replace("Name: ", "")
             size = self.browser.find("div", id="fileDescription").find_all("p")[2].text
-            file_url = self.browser.find("a", id="downloadB")
 
+            # Limpiar nombre del libro (sin autor)
+            book_name = os.path.splitext(raw_filename)[0].split(" - ")[0].strip()
+            filename = f"{book_name}.epub"
+
+            # Crear carpeta para el libro
+            book_folder = os.path.join(author_folder, book_name)
+            if os.path.exists(book_folder):
+                logger.info(f'La carpeta del libro ya existe: {book_folder}. Se omite la descarga.')
+                return None
+            os.makedirs(book_folder, exist_ok=True)
+
+            file_path = os.path.join(book_folder, filename)
+
+            file_url = self.browser.find("a", id="downloadB")
             logger.info(f"Nombre de archivo: {filename}")
             logger.info(f"Tamaño de archivo: {size}")
 
-            file_path = os.path.join(author_folder, filename)
-            if os.path.exists(file_path):
-                logger.info(f'File already exists: {file_path}')
-                return None
             if file_url:
                 time.sleep(1)
                 self.browser.follow_link(file_url, timeout=timeout)
                 with open(file_path, "wb") as epub_file:
                     epub_file.write(self.browser.response.content)
                     logger.info(f'El archivo ha sido descargado en: {epub_file.name}')
+                    # Descargar portada
+                    self.download_cover_google_books(title=book_name, author=author, file_path=file_path)
                     return filename, size
             else:
                 logger.error(f'Error descargando libro: no ha sido posible encontrar el link de descarga')
