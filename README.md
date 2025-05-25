@@ -16,10 +16,39 @@ La función de descarga posee además un paginador, de forma tal que no solo se 
 
 _Forked_ desde repo original [LectulandiaExtractor](https://github.com/Sarrablo/LectulandiaExtractor).
 
+## Instalación por primera vez
+
+- Instalar **pipx**
+
+```bash
+python -m pip install --user pipx
+python -m pipx ensurepath
+```
+
+- Instalar **uv**
+
+```bash
+pipx install uv
+```
+
+Instalar y activar **virtual env**
+
+```bash
+uv venv
+.venv\Scripts\activate
+```
+
+- Instalar **dependencias**
+
+```bash
+uv install
+```
+
 ## Scripts
 
 - `extractor.py`: script de descarga de archivos
 - `CLI.py`: Command Line Interface para correr el código a través de la terminal.
+  Flags:
   - `--author`: Nombre de autor desde el cual descargar libros
   - `--proxy`: Proxy para los requests
   - `--output-dir`: Directorio local en donde descargar los libros
