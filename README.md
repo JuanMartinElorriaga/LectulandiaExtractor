@@ -53,6 +53,10 @@ uv install
   - `--proxy`: Proxy para los requests
   - `--output-dir`: Directorio local en donde descargar los libros
 
+## Notebooks
+
+- `orphan_remover`: función para remover archivos huérfanos de tipo .epub y .mobi, luego de haber indexado la base de datos de Calibre.
+
 Para ejecutar la CLI, simplemente dirigirse a `/scripts` y correr:
 
 ```bash
