@@ -5,8 +5,8 @@ from extractor import Downloader
 
 @click.command()
 @click.option('--author', prompt='Nombre de autor', help='Nombre de autor desde el cual descargar libros')
+@click.option('--output-dir', prompt='Path de descarga', default=r'D:\CalibreLib\Calibre Library', help='Directorio local en donde descargar los libros')
 @click.option('--proxy', default=None, help='Proxy para los requests')
-@click.option('--output-dir', default=r'F:\Calibre Library', help='Directorio local en donde descargar los libros')
 def main(author, proxy, output_dir):
     downloader = Downloader(proxy=proxy, library_folder=output_dir)
 
