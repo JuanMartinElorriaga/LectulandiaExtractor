@@ -16,14 +16,18 @@ logger.add(sys.stdout, level="INFO", format="{time} - {level} - {message}")
 logger.add("Downloader_log.txt", level="INFO", format="{time} - {level} - {message}", rotation="10 MB", compression="zip")
 
 # Paso 1: Verificar si autor ya existe (fuzzy match en Calibre)
-# Paso 2: Si no existe, crear nueva carpeta en library_folder
+# Paso 2: Si no existe, crear nueva carpeta en download_folder
 # Paso 3: Si existe, usar nombre existente y listar subcarpetas (libros)
 # Paso 4: Para cada libro nuevo, verificar si ya fue descargado (fuzzy contra subcarpetas)
 # Paso 5: Si no está, crear carpeta del libro, descargar y guardar
 
+def clean_folder_name(name):
+    """ Funcion helper para remover sufijo a las subcarpetas indexadas por Calibre """
+    return re.sub(r'\s\(\d+\)$', '', name.strip())
+
 class Downloader():
-    def __init__(self, proxy:str, library_folder:str, calibre_library:str=r"D:\CalibreLib\Calibre Library"):
-        self.library_folder = library_folder
+    def __init__(self, proxy:str, download_folder:str, calibre_library:str):
+        self.download_folder = download_folder
         self.calibre_library = calibre_library
         session = requests.Session()
         if proxy:
@@ -33,11 +37,10 @@ class Downloader():
 
     def _get_existing_author_folder(self, author_name_cleaned: str) -> tuple[str, list[str]]:
         """Busca coincidencia fuzzy en Calibre; si hay match, devuelve también subcarpetas"""
-        threshold = 90
+        threshold       = 90
         best_match_name = None
-        best_score = 0
-        subfolders = []
-
+        best_score      = 0
+        subfolders      = []
 
         for calibre_folder in os.listdir(self.calibre_library):
             calibre_path = os.path.join(self.calibre_library, calibre_folder)
@@ -51,19 +54,24 @@ class Downloader():
 
         # Determinar carpeta final de destino
         final_author_folder = best_match_name if best_match_name else author_name_cleaned
-        final_path = os.path.join(self.library_folder, final_author_folder)
+        final_path = os.path.join(self.download_folder, final_author_folder)
 
-        # Si la carpeta no existe, crearla
+        # Crear carpeta destino si no existe
         if not os.path.exists(final_path):
             os.makedirs(final_path)
             logger.info(f'Carpeta creada: {final_path}')
         else:
             logger.info(f'Carpeta ya existente: {final_path}')
-            # Obtener lista de subcarpetas (libros existentes)
-            subfolders = [f for f in os.listdir(final_path) if os.path.isdir(os.path.join(final_path, f))]
+
+        # Buscar subcarpetas existentes dentro de calibre_library
+        calibre_author_path = os.path.join(self.calibre_library, final_author_folder)
+        if os.path.exists(calibre_author_path):
+            raw_subfolders = [f for f in os.listdir(calibre_author_path) if os.path.isdir(os.path.join(calibre_author_path, f))]
+            subfolders = [clean_folder_name(f) for f in raw_subfolders]
+        else:
+            logger.warning(f'No se encontró la carpeta del autor en calibre: {calibre_author_path}')
 
         return final_path, subfolders
-
 
 
     def get_author_url(self, author:str) -> str:

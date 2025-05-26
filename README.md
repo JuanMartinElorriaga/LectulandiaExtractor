@@ -51,6 +51,8 @@ uv venv
 uv install
 ```
 
+Finalmente, en caso de usar Calibre Desktop, garantizar que calibredb se encuentra en el **PATH**. En su defecto, agregar al path para poder correr el subproceso.
+
 ## Scripts
 
 - `extractor.py`: script de descarga de archivos
@@ -59,6 +61,7 @@ uv install
   - `--author`: Nombre de autor desde el cual descargar libros
   - `--proxy`: Proxy para los requests
   - `--output-dir`: Directorio local en donde descargar los libros
+- `calibre_utils`: Funciones para interactuar con la base de datos de Calibre. En caso de usar la versión Calibre Desktop, esta debe estar apagada para llevar a cabo la sincronización de datos. Los archivos preexistentes no son actualizados.
 
 ## Notebooks
 

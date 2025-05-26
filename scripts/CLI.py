@@ -1,14 +1,17 @@
 import click
 from urllib.parse import urlparse, unquote
-
 from extractor import Downloader
+import os
+
+from calibre_utils import add_folder_to_calibre
 
 @click.command()
 @click.option('--author', prompt='Nombre de autor', help='Nombre de autor desde el cual descargar libros')
-@click.option('--output-dir', prompt='Path de descarga', default=r'C:\Users\juanm\Documents\LIBROS', help='Directorio local en donde descargar los libros')
+@click.option('--download_folder', prompt='Path de descarga', default=r'C:\Users\juanm\Documents\LIBROS', help='Directorio local en donde descargar los libros')
+@click.option('--calibre_library', prompt='Path de base Calibre', default=r"D:\CalibreLib\Calibre Library", help='Directorio de la libreria Calibre')
 @click.option('--proxy', default=None, help='Proxy para los requests')
-def main(author, proxy, output_dir):
-    downloader = Downloader(proxy=proxy, library_folder=output_dir)
+def main(author, proxy, download_folder, calibre_library):
+    downloader = Downloader(proxy, download_folder, calibre_library)
 
     try:
         author_url = downloader.get_author_url(author)
@@ -45,10 +48,15 @@ def main(author, proxy, output_dir):
         click.echo(f'Total de libros a descargar de {author.title()}: {len(download_links)}')
 
         if not click.confirm('Quieres comenzar con la descarga?', default=True):
-            raise click.Abort("Descarga abortada por el usuario.")
+            raise click.Abort("❌ Descarga abortada por el usuario.")
 
         downloader.batch_download_books(download_links, author)
-        click.echo(click.style('Descarga finalizada!', fg='green'))
+        click.echo(click.style('✔ Descarga finalizada!', fg='green'))
+
+        # Agregar a Calibre (calibre.exe debe estar apagado)
+        if click.confirm('Quieres actualizar la base de datos Calibre?', default=True):
+            author_folder = os.path.join(download_folder, author)
+            add_folder_to_calibre(author_folder, calibre_library)
 
     except Exception as e:
         click.echo(click.style(f'Error: {str(e)}', fg='red'))
