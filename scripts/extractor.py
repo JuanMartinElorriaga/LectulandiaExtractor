@@ -15,17 +15,16 @@ logger.remove()
 logger.add(sys.stdout, level="INFO", format="{time} - {level} - {message}")
 logger.add("Downloader_log.txt", level="INFO", format="{time} - {level} - {message}", rotation="10 MB", compression="zip")
 
-# Create a StreamHandler to print log messages to the console
-#console_handler   = logger.StreamHandler()
-#console_handler.setLevel(logger.INFO)
-#console_formatter = logger.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-#console_handler.setFormatter(console_formatter)
-# Add the StreamHandler to the logger
-#logger.getLogger().addHandler(console_handler)
+# Paso 1: Verificar si autor ya existe (fuzzy match en Calibre)
+# Paso 2: Si no existe, crear nueva carpeta en library_folder
+# Paso 3: Si existe, usar nombre existente y listar subcarpetas (libros)
+# Paso 4: Para cada libro nuevo, verificar si ya fue descargado (fuzzy contra subcarpetas)
+# Paso 5: Si no está, crear carpeta del libro, descargar y guardar
 
 class Downloader():
-    def __init__(self, proxy:str, library_folder:str):
+    def __init__(self, proxy:str, library_folder:str, calibre_library:str=r"D:\CalibreLib\Calibre Library"):
         self.library_folder = library_folder
+        self.calibre_library = calibre_library
         session = requests.Session()
         if proxy:
             session.proxies = {'http': proxy, 'https': proxy}
@@ -39,10 +38,9 @@ class Downloader():
         best_score = 0
         subfolders = []
 
-        CALIBRE_FOLDER = r"D:\CalibreLib\Calibre Library"
 
-        for calibre_folder in os.listdir(CALIBRE_FOLDER):
-            calibre_path = os.path.join(CALIBRE_FOLDER, calibre_folder)
+        for calibre_folder in os.listdir(self.calibre_library):
+            calibre_path = os.path.join(self.calibre_library, calibre_folder)
             if os.path.isdir(calibre_path):
                 normalized = unidecode(calibre_folder).strip().lower()
                 score = fuzz.ratio(normalized, author_name_cleaned)
@@ -202,9 +200,13 @@ class Downloader():
                     return None
 
             book_folder = os.path.join(author_folder, book_name)
-            os.makedirs(book_folder, exist_ok=True)
-            file_path = os.path.join(book_folder, filename)
+            if os.path.exists(book_folder):
+                logger.info(f'El libro ya existe en la carpeta destino: {book_folder}. Se omite la descarga.')
+                return None
+            else:
+                os.makedirs(book_folder, exist_ok=True)
 
+            file_path = os.path.join(book_folder, filename)
             file_url = self.browser.find("a", id="downloadB")
             logger.info(f"Nombre de archivo: {filename}")
             logger.info(f"Tamaño de archivo: {size}")
