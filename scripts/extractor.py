@@ -53,7 +53,8 @@ class Downloader():
                     logger.info(f'Carpeta existente detectada por fuzzy match: "{calibre_folder}" (score: {score}%)')
 
         # Determinar carpeta final de destino
-        final_author_folder = best_match_name if best_match_name else author_name_cleaned
+        normalized_capitalized = ' '.join(word.capitalize() for word in author_name_cleaned.split())
+        final_author_folder = best_match_name if best_match_name else normalized_capitalized
         final_path = os.path.join(self.download_folder, final_author_folder)
 
         # Crear carpeta destino si no existe
@@ -69,7 +70,7 @@ class Downloader():
             raw_subfolders = [f for f in os.listdir(calibre_author_path) if os.path.isdir(os.path.join(calibre_author_path, f))]
             subfolders = [clean_folder_name(f) for f in raw_subfolders]
         else:
-            logger.warning(f'No se encontró la carpeta del autor en calibre: {calibre_author_path}')
+            logger.info(f'No se encontró la carpeta del autor en calibre: {calibre_author_path}')
 
         return final_path, subfolders
 
