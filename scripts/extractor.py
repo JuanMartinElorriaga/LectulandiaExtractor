@@ -32,22 +32,40 @@ class Downloader():
         self.browser = RoboBrowser(history=True, parser='html.parser', session=session)
 
 
-    def _get_existing_author_folder(self, author_name_cleaned:str) -> str:
-        """ Find fuzzy coincidence in local folders and author name """
-        threshold  = 90
-        best_match = None
+    def _get_existing_author_folder(self, author_name_cleaned: str) -> tuple[str, list[str]]:
+        """Busca coincidencia fuzzy en Calibre; si hay match, devuelve también subcarpetas"""
+        threshold = 90
+        best_match_name = None
         best_score = 0
+        subfolders = []
 
-        for existing in os.listdir(self.library_folder):
-            existing_path = os.path.join(self.library_folder, existing)
-            if os.path.isdir(existing_path):
-                normalized = unidecode(existing).strip().lower()
+        CALIBRE_FOLDER = r"D:\CalibreLib\Calibre Library"
+
+        for calibre_folder in os.listdir(CALIBRE_FOLDER):
+            calibre_path = os.path.join(CALIBRE_FOLDER, calibre_folder)
+            if os.path.isdir(calibre_path):
+                normalized = unidecode(calibre_folder).strip().lower()
                 score = fuzz.ratio(normalized, author_name_cleaned)
                 if score >= threshold and score > best_score:
-                    best_match = existing_path
+                    best_match_name = calibre_folder
                     best_score = score
-                    logger.info(f'Carpeta existente detectada por fuzzy match: "{existing}" (score: {score}%)')
-        return best_match
+                    logger.info(f'Carpeta existente detectada por fuzzy match: "{calibre_folder}" (score: {score}%)')
+
+        # Determinar carpeta final de destino
+        final_author_folder = best_match_name if best_match_name else author_name_cleaned
+        final_path = os.path.join(self.library_folder, final_author_folder)
+
+        # Si la carpeta no existe, crearla
+        if not os.path.exists(final_path):
+            os.makedirs(final_path)
+            logger.info(f'Carpeta creada: {final_path}')
+        else:
+            logger.info(f'Carpeta ya existente: {final_path}')
+            # Obtener lista de subcarpetas (libros existentes)
+            subfolders = [f for f in os.listdir(final_path) if os.path.isdir(os.path.join(final_path, f))]
+
+        return final_path, subfolders
+
 
 
     def get_author_url(self, author:str) -> str:
@@ -156,14 +174,7 @@ class Downloader():
 
     def download_book(self, download_url: str, author: str, timeout: int = 180) -> None:
         author_name_cleaned = unidecode(author).strip().lower()
-        existing_folder = self._get_existing_author_folder(author_name_cleaned)
-
-        if existing_folder:
-            author_folder = existing_folder
-        else:
-            clean_name = unidecode(author.title()).strip()
-            author_folder = os.path.join(self.library_folder, clean_name)
-            os.makedirs(author_folder, exist_ok=True)
+        author_folder, existing_books = self._get_existing_author_folder(author_name_cleaned)
 
         try:
             logger.info(f'Descargando desde: {download_url}')
@@ -174,21 +185,24 @@ class Downloader():
             logger.info(f'antupload: {ant_url}')
             self.browser.open(ant_url)
 
-            # Extraer nombre y tamaño del archivo
             raw_filename = self.browser.find("div", id="fileDescription").find_all("p")[1].text.replace("Name: ", "")
             size = self.browser.find("div", id="fileDescription").find_all("p")[2].text
 
-            # Limpiar nombre del libro (sin autor)
             book_name = os.path.splitext(raw_filename)[0].split(" - ")[0].strip()
             filename = f"{book_name}.epub"
 
-            # Crear carpeta para el libro
-            book_folder = os.path.join(author_folder, book_name)
-            if os.path.exists(book_folder):
-                logger.info(f'La carpeta del libro ya existe: {book_folder}. Se omite la descarga.')
-                return None
-            os.makedirs(book_folder, exist_ok=True)
+            # Verificación fuzzy contra subcarpetas existentes
+            threshold = 90
+            book_name_cleaned = unidecode(book_name).strip().lower()
+            for existing in existing_books:
+                existing_cleaned = unidecode(existing).strip().lower()
+                score = fuzz.ratio(existing_cleaned, book_name_cleaned)
+                if score >= threshold:
+                    logger.info(f'Se detectó un libro similar ya existente: "{existing}" (score: {score}%). Se omite la descarga.')
+                    return None
 
+            book_folder = os.path.join(author_folder, book_name)
+            os.makedirs(book_folder, exist_ok=True)
             file_path = os.path.join(book_folder, filename)
 
             file_url = self.browser.find("a", id="downloadB")
@@ -201,7 +215,6 @@ class Downloader():
                 with open(file_path, "wb") as epub_file:
                     epub_file.write(self.browser.response.content)
                     logger.info(f'El archivo ha sido descargado en: {epub_file.name}')
-                    # Descargar portada
                     self.download_cover_google_books(title=book_name, author=author, file_path=file_path)
                     return filename, size
             else:
@@ -213,6 +226,7 @@ class Downloader():
         except Exception as e:
             logger.error(f'Error descargando libro: {str(e)}')
             return None
+
 
 
     def batch_download_books(self, urls_from_author:list, author:str):
