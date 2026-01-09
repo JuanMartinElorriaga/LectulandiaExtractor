@@ -15,6 +15,7 @@ from calibre_utils import add_folder_to_calibre
 from config.settings import settings
 from searcher import BookSearcher, display_search_results
 from indexer import rebuild_index, update_index, get_index_info
+import database as db
 
 console = Console()
 
@@ -432,7 +433,7 @@ def search_in_catalog(downloader: Downloader, dry_run: bool, download_folder: st
                         # Direct mode: Author/Book structure directly in download_folder
                         results_dl = download_with_progress(downloader, download_links, direct_mode=True)
                         show_results("Catálogo", failed_links, results_dl)
-                        
+
                         # Calibre sync - sync entire download folder
                         if calibre_library and results_dl.get('exitosos'):
                             add_to_calibre_choice = inquirer.confirm(
@@ -497,6 +498,42 @@ def do_rebuild_index():
         console.print(f"[red]Error al construir índice: {e}[/red]")
 
 
+def do_migrate_json():
+    """Migrate existing JSON index to SQLite database."""
+    from pathlib import Path
+
+    json_file = Path(__file__).parent.parent / "data" / "catalog_index.json"
+
+    if not json_file.exists():
+        console.print("[yellow]⚠️  No se encontró el archivo JSON de índice.[/yellow]")
+        console.print(f"[dim]Buscado en: {json_file}[/dim]")
+        return
+
+    # Check file size
+    size_mb = json_file.stat().st_size / (1024 * 1024)
+    console.print(f"\n[cyan]📄 Archivo JSON encontrado:[/cyan] {size_mb:.1f} MB")
+
+    confirm = inquirer.confirm(
+        message="¿Migrar datos de JSON a SQLite?",
+        default=True,
+    ).execute()
+
+    if not confirm:
+        console.print("[dim]Operación cancelada.[/dim]")
+        return
+
+    try:
+        with console.status("[cyan]Migrando datos...[/cyan]", spinner="dots"):
+            count = db.migrate_from_json()
+
+        console.print(f"\n[green bold]✅ Migración completada![/green bold]")
+        console.print(f"   📚 [cyan]{count}[/cyan] libros migrados")
+        console.print(f"   💾 Base de datos: [dim]{db.DB_FILE}[/dim]")
+        console.print(f"\n[dim]El archivo JSON original se ha conservado como respaldo.[/dim]\n")
+    except Exception as e:
+        console.print(f"[red]Error durante la migración: {e}[/red]")
+
+
 def main():
     """Main CLI entry point."""
     console.clear()
@@ -531,20 +568,35 @@ def main():
         else:
             index_status = " (no disponible)"
 
+        # Check if JSON exists for migration option
+        from pathlib import Path
+        json_file = Path(__file__).parent.parent / "data" / "catalog_index.json"
+        has_json = json_file.exists()
+
+        # Build menu choices
+        menu_choices = [
+            {"name": f"🔍 Buscar en Catálogo{index_status}", "value": "search"},
+            {"name": "📚 Buscar por Género (listado web)", "value": "genero"},
+            {"name": "📝 Buscar por Autor (búsqueda web exacta)", "value": "autor"},
+            Separator(),
+            {"name": "🔄 Actualizar Índice (solo nuevos)", "value": "update"},
+            {"name": "🔁 Reconstruir Índice (desde cero)", "value": "rebuild"},
+        ]
+
+        # Add migration option if JSON file exists
+        if has_json:
+            menu_choices.append({"name": "📦 Migrar JSON a SQLite", "value": "migrate"})
+
+        menu_choices.extend([
+            Separator(),
+            {"name": "❌ Salir", "value": "exit"},
+        ])
+
         # Search mode selection
         search_mode = inquirer.select(
             message="¿Qué deseas hacer?",
-            choices=[
-                {"name": "📝 Buscar por Autor", "value": "autor"},
-                {"name": "📚 Buscar por Género", "value": "genero"},
-                Separator(),
-                {"name": f"🔍 Buscar en Catálogo{index_status}", "value": "search"},
-                {"name": "🔄 Actualizar Índice (solo nuevos)", "value": "update"},
-                {"name": "🔁 Reconstruir Índice (desde cero)", "value": "rebuild"},
-                Separator(),
-                {"name": "❌ Salir", "value": "exit"},
-            ],
-            default="autor",
+            choices=menu_choices,
+            default="search",
         ).execute()
 
         if search_mode == "exit":
@@ -557,6 +609,10 @@ def main():
 
         if search_mode == "rebuild":
             do_rebuild_index()
+            return
+
+        if search_mode == "migrate":
+            do_migrate_json()
             return
 
         # Initialize downloader for other modes
