@@ -288,7 +288,7 @@ class Downloader():
                 continue
         return download_links, failed_urls
 
-    def download_book(self, download_url: str, author: str = None, timeout: int = None, folder_name: str = None) -> None:
+    def download_book(self, download_url: str, author: str = None, timeout: int = None, folder_name: str = None, direct_mode: bool = False) -> None:
         """
         Download a single book with validation.
 
@@ -297,20 +297,10 @@ class Downloader():
             author: Author name (used for folder organization in author mode)
             timeout: Download timeout in seconds
             folder_name: Optional folder name override (used for genre mode)
+            direct_mode: If True, creates Author/Book structure directly in download_folder
         """
         if timeout is None:
             timeout = settings.DOWNLOAD_TIMEOUT
-
-        # Determine target folder based on mode
-        if folder_name:
-            # Genre mode: use provided folder name
-            target_folder, existing_books = self._get_genre_folder(folder_name)
-        elif author:
-            # Author mode: use author folder with Calibre lookup
-            author_name_cleaned = unidecode(author).strip().lower()
-            target_folder, existing_books = self._get_existing_author_folder(author_name_cleaned)
-        else:
-            raise ValueError("Debe especificar author o folder_name")
 
         try:
             logger.info(f'Descargando desde: {download_url}')
@@ -342,9 +332,24 @@ class Downloader():
             name_without_ext = os.path.splitext(raw_filename)[0]
             parts = name_without_ext.split(" - ")
             book_name = parts[0].strip()
-            # Extract author from filename if available (for genre mode folder structure)
+            # Extract author from filename if available
             file_author = parts[1].strip() if len(parts) > 1 else "Autor Desconocido"
             filename = f"{book_name}.epub"
+
+            # Determine target folder based on mode
+            if direct_mode:
+                # Direct mode (catalog): downloads/Author/Book/ - use extracted author
+                author_name_cleaned = unidecode(file_author).strip().lower()
+                target_folder, existing_books = self._get_existing_author_folder(author_name_cleaned)
+            elif folder_name:
+                # Genre mode: Genre/Author/Book/
+                target_folder, existing_books = self._get_genre_folder(folder_name)
+            elif author:
+                # Author mode: Author/Book/ with Calibre lookup
+                author_name_cleaned = unidecode(author).strip().lower()
+                target_folder, existing_books = self._get_existing_author_folder(author_name_cleaned)
+            else:
+                raise ValueError("Debe especificar author, folder_name, o direct_mode=True")
 
             # Fuzzy match verification against existing books
             threshold = settings.BOOK_MATCH_THRESHOLD
@@ -361,7 +366,7 @@ class Downloader():
                 # Genre mode: Genre/Author/BookName/
                 book_folder = sanitize_path(Path(target_folder), file_author, book_name)
             else:
-                # Author mode: Author/BookName/
+                # Author mode or Direct mode: Author/BookName/
                 book_folder = sanitize_path(Path(target_folder), book_name)
 
             if book_folder.exists():
@@ -415,7 +420,7 @@ class Downloader():
             logger.error(f'Error descargando libro: {str(e)}')
             return None
 
-    def batch_download_books(self, download_urls: list, author: str = None, folder_name: str = None) -> dict:
+    def batch_download_books(self, download_urls: list, author: str = None, folder_name: str = None, direct_mode: bool = False) -> dict:
         """
         Download all books from a list with result tracking.
 
@@ -423,6 +428,7 @@ class Downloader():
             download_urls: List of download URLs
             author: Author name (for author mode)
             folder_name: Folder name override (for genre mode)
+            direct_mode: If True, creates Author/Book structure directly in download_folder
 
         Returns:
             dict with keys: 'exitosos', 'fallidos', 'omitidos'
@@ -434,13 +440,13 @@ class Downloader():
         }
 
         total = len(download_urls)
-        display_name = folder_name if folder_name else (author.title() if author else "Desconocido")
+        display_name = folder_name if folder_name else (author.title() if author else "Catálogo")
 
         for i, url in enumerate(download_urls, 1):
             logger.info(f"Procesando libro {i}/{total}")
 
             try:
-                result = self.download_book(url, author=author, folder_name=folder_name)
+                result = self.download_book(url, author=author, folder_name=folder_name, direct_mode=direct_mode)
 
                 if result is None:
                     results['omitidos'].append(url)

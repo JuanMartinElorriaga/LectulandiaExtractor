@@ -1,12 +1,11 @@
 """
 Indexer module for building a local catalog of Lectulandia books.
 
-This module scrapes the website to build a JSON index that can be used
+This module scrapes the website to build a SQLite database index that can be used
 for fast local searches without making HTTP requests.
 """
 
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote
@@ -19,9 +18,12 @@ from src.infrastructure.http.http_client import HTTPClient
 from src.utils.delays import smart_delay
 from config.settings import settings
 
+# Import database module
+import database as db
+
 console = Console()
 
-# Default index file path
+# Legacy JSON file path (for migration)
 INDEX_DIR = Path(__file__).parent.parent / "data"
 INDEX_FILE = INDEX_DIR / "catalog_index.json"
 
@@ -31,20 +33,15 @@ class LectulandiaIndexer:
     Builds and maintains a local index of Lectulandia's catalog.
 
     Scrapes all books from /book/ pages with pagination support.
+    Stores data in SQLite with FTS5 for fast searching.
     """
 
     def __init__(self, proxy: str = None):
         self.http_client = HTTPClient(proxy=proxy)
-        self.index = {
-            "metadata": {
-                "last_updated": None,
-                "total_books": 0,
-                "source_url": f"{settings.LECTULANDIA_BASE_URL}/book/",
-            },
-            "books": [],
-        }
+        self.books_buffer = []  # Buffer for batch inserts
+        self.buffer_size = 100  # Flush every N books
 
-    def build_index(self, max_pages: int = None) -> dict:
+    def build_index(self, max_pages: int = None) -> int:
         """
         Build the complete index by scraping all book pages (from scratch).
 
@@ -52,14 +49,18 @@ class LectulandiaIndexer:
             max_pages: Maximum pages to scrape (None = all pages)
 
         Returns:
-            The built index dictionary
+            Total number of books indexed
         """
         console.print("\n[bold cyan]🔁 Reconstruyendo índice desde cero...[/bold cyan]")
         console.print(f"[dim]Fuente: {settings.LECTULANDIA_BASE_URL}/book/[/dim]\n")
 
-        books = []
+        # Initialize database and clear existing data
+        db.init_db()
+        
+        total_books = 0
         page = 1
         has_more = True
+        self.books_buffer = []
 
         with Progress(
             SpinnerColumn(),
@@ -101,8 +102,15 @@ class LectulandiaIndexer:
                         has_more = False
                         continue
 
-                    books.extend(page_books)
-                    progress.update(task, books=len(books))
+                    # Add to buffer
+                    self.books_buffer.extend(page_books)
+                    total_books += len(page_books)
+                    
+                    # Flush buffer periodically
+                    if len(self.books_buffer) >= self.buffer_size:
+                        self._flush_buffer(clear_existing=(page == 1 and total_books == len(page_books)))
+                    
+                    progress.update(task, books=total_books)
 
                     # Check for next page
                     next_link = soup.find("a", class_="next page-numbers")
@@ -119,19 +127,31 @@ class LectulandiaIndexer:
                     if page > 3:  # If we fail on multiple pages, stop
                         has_more = False
 
-        # Store books in index
-        self.index["books"] = books
-        self.index["metadata"]["last_updated"] = datetime.now().isoformat()
-        self.index["metadata"]["total_books"] = len(books)
-        self.index["metadata"]["total_pages_scraped"] = page - 1 if not has_more else page
+        # Flush remaining books
+        if self.books_buffer:
+            self._flush_buffer()
+
+        # Update metadata
+        pages_scraped = page - 1 if not has_more else page
+        db.update_metadata("last_updated", datetime.now().isoformat())
+        db.update_metadata("total_books", str(db.get_total_books()))
+        db.update_metadata("total_pages_scraped", str(pages_scraped))
+        db.update_metadata("source_url", f"{settings.LECTULANDIA_BASE_URL}/book/")
 
         console.print(f"\n[green bold]✅ Índice construido![/green bold]")
-        console.print(f"   📚 [cyan]{len(books)}[/cyan] libros indexados")
-        console.print(f"   📄 [cyan]{self.index['metadata']['total_pages_scraped']}[/cyan] páginas procesadas\n")
+        console.print(f"   📚 [cyan]{db.get_total_books()}[/cyan] libros indexados")
+        console.print(f"   📄 [cyan]{pages_scraped}[/cyan] páginas procesadas")
+        console.print(f"   💾 Guardado en: [dim]{db.DB_FILE}[/dim]\n")
 
-        return self.index
+        return db.get_total_books()
 
-    def update_index(self, max_pages: int = 10) -> dict:
+    def _flush_buffer(self, clear_existing: bool = False) -> None:
+        """Flush the books buffer to the database."""
+        if self.books_buffer:
+            db.insert_books(self.books_buffer, clear_existing=clear_existing)
+            self.books_buffer = []
+
+    def update_index(self, max_pages: int = 10) -> int:
         """
         Update the index incrementally by adding only new books.
 
@@ -141,17 +161,15 @@ class LectulandiaIndexer:
             max_pages: Number of pages to check (default 10)
 
         Returns:
-            The updated index dictionary
+            Number of new books added
         """
-        # Load existing index
-        existing_index = self.load_index()
-
-        if not existing_index or not existing_index.get("books"):
+        # Check if database exists
+        if not db.is_available():
             console.print("[yellow]No existe índice previo. Construyendo desde cero...[/yellow]")
             return self.build_index()
 
-        # Build set of existing slugs for fast lookup
-        existing_slugs = {book["slug"] for book in existing_index["books"]}
+        # Get existing slugs for fast lookup
+        existing_slugs = db.get_existing_slugs()
         existing_count = len(existing_slugs)
 
         console.print("\n[bold cyan]🔄 Actualizando índice (solo libros nuevos)...[/bold cyan]")
@@ -221,19 +239,21 @@ class LectulandiaIndexer:
 
         if not new_books:
             console.print("\n[green]✓ El índice ya está actualizado. No hay libros nuevos.[/green]\n")
-            return existing_index
+            return 0
 
-        # Prepend new books to existing list
-        self.index["books"] = new_books + existing_index["books"]
-        self.index["metadata"]["last_updated"] = datetime.now().isoformat()
-        self.index["metadata"]["total_books"] = len(self.index["books"])
-        self.index["metadata"]["pages_checked_for_update"] = page
+        # Insert new books
+        inserted = db.insert_books(new_books)
+        
+        # Update metadata
+        db.update_metadata("last_updated", datetime.now().isoformat())
+        db.update_metadata("total_books", str(db.get_total_books()))
+        db.update_metadata("pages_checked_for_update", str(page))
 
         console.print(f"\n[green bold]✅ Índice actualizado![/green bold]")
-        console.print(f"   [green]+{len(new_books)}[/green] libros nuevos añadidos")
-        console.print(f"   📚 [cyan]{len(self.index['books'])}[/cyan] libros en total\n")
+        console.print(f"   [green]+{inserted}[/green] libros nuevos añadidos")
+        console.print(f"   📚 [cyan]{db.get_total_books()}[/cyan] libros en total\n")
 
-        return self.index
+        return inserted
 
     def _extract_books_from_page(self, soup) -> list:
         """Extract book information from a page, including author."""
@@ -259,12 +279,12 @@ class LectulandiaIndexer:
 
                 # Try to extract author from parent article container
                 author = None
-                
+
                 # Navigate up to find parent article
                 parent = link.find_parent("article")
                 if not parent:
                     parent = link.find_parent("div")
-                
+
                 if parent:
                     # Author is in <a href="/autor/..." rel="tag">Author Name</a>
                     author_link = parent.find("a", href=lambda h: h and "/autor/" in h)
@@ -284,32 +304,6 @@ class LectulandiaIndexer:
 
         return books
 
-    def save_index(self, filepath: Path = None) -> None:
-        """Save the index to a JSON file."""
-        if filepath is None:
-            filepath = INDEX_FILE
-
-        # Ensure directory exists
-        filepath.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(self.index, f, ensure_ascii=False, indent=2)
-
-        console.print(f"[green]✓[/green] Índice guardado en: [dim]{filepath}[/dim]\n")
-
-    def load_index(self, filepath: Path = None) -> dict:
-        """Load an existing index from file."""
-        if filepath is None:
-            filepath = INDEX_FILE
-
-        if not filepath.exists():
-            return None
-
-        with open(filepath, "r", encoding="utf-8") as f:
-            self.index = json.load(f)
-
-        return self.index
-
     def close(self):
         """Close HTTP client."""
         if hasattr(self, 'http_client'):
@@ -322,15 +316,20 @@ class LectulandiaIndexer:
 
 def get_index_info() -> dict | None:
     """Get information about the existing index."""
-    if not INDEX_FILE.exists():
+    if not db.is_available():
         return None
 
-    try:
-        with open(INDEX_FILE, "r", encoding="utf-8") as f:
-            index = json.load(f)
-        return index.get("metadata")
-    except Exception:
+    metadata = db.get_metadata()
+    if not metadata:
         return None
+    
+    # Convert to expected format
+    return {
+        "last_updated": metadata.get("last_updated"),
+        "total_books": int(metadata.get("total_books", 0)),
+        "total_pages_scraped": int(metadata.get("total_pages_scraped", 0)),
+        "source_url": metadata.get("source_url"),
+    }
 
 
 def rebuild_index(max_pages: int = None) -> None:
@@ -343,7 +342,6 @@ def rebuild_index(max_pages: int = None) -> None:
     indexer = LectulandiaIndexer()
     try:
         indexer.build_index(max_pages=max_pages)
-        indexer.save_index()
     finally:
         indexer.close()
 
@@ -358,7 +356,6 @@ def update_index(max_pages: int = 10) -> None:
     indexer = LectulandiaIndexer()
     try:
         indexer.update_index(max_pages=max_pages)
-        indexer.save_index()
     finally:
         indexer.close()
 
@@ -369,6 +366,9 @@ if __name__ == "__main__":
 
     if len(sys.argv) > 1 and sys.argv[1] == "--update":
         update_index()
+    elif len(sys.argv) > 1 and sys.argv[1] == "--migrate":
+        count = db.migrate_from_json()
+        print(f"Migrated {count} books from JSON to SQLite")
     else:
         max_pages = int(sys.argv[1]) if len(sys.argv) > 1 else 10
         rebuild_index(max_pages=max_pages)

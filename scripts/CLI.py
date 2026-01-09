@@ -15,6 +15,7 @@ from calibre_utils import add_folder_to_calibre
 from config.settings import settings
 from searcher import BookSearcher, display_search_results
 from indexer import rebuild_index, update_index, get_index_info
+import database as db
 
 console = Console()
 
@@ -95,9 +96,16 @@ def show_books_table(book_urls: list, title: str):
     console.print()
 
 
-def download_with_progress(downloader: Downloader, download_links: list, author: str = None, folder_name: str = None) -> dict:
+def download_with_progress(downloader: Downloader, download_links: list, author: str = None, folder_name: str = None, direct_mode: bool = False) -> dict:
     """Download books with a nice progress display."""
-    display_name = folder_name if folder_name else author.title()
+    if direct_mode:
+        display_name = "Catálogo"
+    elif folder_name:
+        display_name = folder_name
+    elif author:
+        display_name = author.title()
+    else:
+        display_name = "Descarga"
 
     with Progress(
         SpinnerColumn(),
@@ -121,7 +129,7 @@ def download_with_progress(downloader: Downloader, download_links: list, author:
 
         for url in download_links:
             try:
-                result = downloader.download_book(url, author=author, folder_name=folder_name)
+                result = downloader.download_book(url, author=author, folder_name=folder_name, direct_mode=direct_mode)
 
                 if result is None:
                     results['omitidos'].append(url)
@@ -242,7 +250,7 @@ def search_by_author(downloader: Downloader, dry_run: bool, download_folder: str
             add_folder_to_calibre(author_folder, calibre_library)
 
 
-def search_by_genre(downloader: Downloader, dry_run: bool, download_folder: str):
+def search_by_genre(downloader: Downloader, dry_run: bool, download_folder: str, calibre_library: str = None):
     """Handle genre search mode."""
     with console.status("[cyan]Obteniendo géneros disponibles...[/cyan]", spinner="dots"):
         genres = downloader.get_available_genres()
@@ -316,8 +324,20 @@ def search_by_genre(downloader: Downloader, dry_run: bool, download_folder: str)
     results = download_with_progress(downloader, download_links, folder_name=selected_genre_name)
     show_results(selected_genre_name, failed_links, results)
 
+    # Calibre sync - sync the genre folder (contains Author/Book structure)
+    if calibre_library and results:
+        genre_folder = os.path.join(download_folder, selected_genre_name)
+        if os.path.exists(genre_folder):
+            add_to_calibre = inquirer.confirm(
+                message="¿Agregar a Calibre?",
+                default=True,
+            ).execute()
 
-def search_in_catalog(downloader: Downloader, dry_run: bool, download_folder: str):
+            if add_to_calibre:
+                add_folder_to_calibre(genre_folder, calibre_library)
+
+
+def search_in_catalog(downloader: Downloader, dry_run: bool, download_folder: str, calibre_library: str = None):
     """Search for books in the local catalog index."""
     searcher = BookSearcher()
 
@@ -367,7 +387,7 @@ def search_in_catalog(downloader: Downloader, dry_run: bool, download_folder: st
 
         search_label = {
             "title": "título",
-            "author": "autor", 
+            "author": "autor",
             "all": "título o autor"
         }[search_type]
 
@@ -410,8 +430,18 @@ def search_in_catalog(downloader: Downloader, dry_run: bool, download_folder: st
                         download_links, failed_links = downloader.get_batch_download_links(selected_urls)
 
                     if download_links and not dry_run:
-                        results_dl = download_with_progress(downloader, download_links, folder_name="Búsqueda")
-                        show_results("Búsqueda", failed_links, results_dl)
+                        # Direct mode: Author/Book structure directly in download_folder
+                        results_dl = download_with_progress(downloader, download_links, direct_mode=True)
+                        show_results("Catálogo", failed_links, results_dl)
+
+                        # Calibre sync - sync entire download folder
+                        if calibre_library and results_dl.get('exitosos'):
+                            add_to_calibre_choice = inquirer.confirm(
+                                message="¿Agregar a Calibre?",
+                                default=True,
+                            ).execute()
+                            if add_to_calibre_choice:
+                                add_folder_to_calibre(download_folder, calibre_library)
                     elif dry_run:
                         console.print(Panel(
                             "\n".join([f"• {extract_book_name(link)}" for link in download_links]),
@@ -449,7 +479,7 @@ def do_rebuild_index():
         min_allowed=0,
         max_allowed=500,
     ).execute()
-    
+
     max_pages = int(max_pages) if int(max_pages) > 0 else None
 
     if max_pages is None:
@@ -457,7 +487,7 @@ def do_rebuild_index():
             message="¿Indexar TODAS las páginas? Esto puede tomar mucho tiempo",
             default=False,
         ).execute()
-        
+
         if not confirm:
             console.print("[dim]Operación cancelada.[/dim]")
             return
@@ -466,6 +496,42 @@ def do_rebuild_index():
         rebuild_index(max_pages=max_pages)
     except Exception as e:
         console.print(f"[red]Error al construir índice: {e}[/red]")
+
+
+def do_migrate_json():
+    """Migrate existing JSON index to SQLite database."""
+    from pathlib import Path
+
+    json_file = Path(__file__).parent.parent / "data" / "catalog_index.json"
+
+    if not json_file.exists():
+        console.print("[yellow]⚠️  No se encontró el archivo JSON de índice.[/yellow]")
+        console.print(f"[dim]Buscado en: {json_file}[/dim]")
+        return
+
+    # Check file size
+    size_mb = json_file.stat().st_size / (1024 * 1024)
+    console.print(f"\n[cyan]📄 Archivo JSON encontrado:[/cyan] {size_mb:.1f} MB")
+
+    confirm = inquirer.confirm(
+        message="¿Migrar datos de JSON a SQLite?",
+        default=True,
+    ).execute()
+
+    if not confirm:
+        console.print("[dim]Operación cancelada.[/dim]")
+        return
+
+    try:
+        with console.status("[cyan]Migrando datos...[/cyan]", spinner="dots"):
+            count = db.migrate_from_json()
+
+        console.print(f"\n[green bold]✅ Migración completada![/green bold]")
+        console.print(f"   📚 [cyan]{count}[/cyan] libros migrados")
+        console.print(f"   💾 Base de datos: [dim]{db.DB_FILE}[/dim]")
+        console.print(f"\n[dim]El archivo JSON original se ha conservado como respaldo.[/dim]\n")
+    except Exception as e:
+        console.print(f"[red]Error durante la migración: {e}[/red]")
 
 
 def main():
@@ -502,20 +568,35 @@ def main():
         else:
             index_status = " (no disponible)"
 
+        # Check if JSON exists for migration option
+        from pathlib import Path
+        json_file = Path(__file__).parent.parent / "data" / "catalog_index.json"
+        has_json = json_file.exists()
+
+        # Build menu choices
+        menu_choices = [
+            {"name": f"🔍 Buscar en Catálogo{index_status}", "value": "search"},
+            {"name": "📚 Buscar por Género (listado web)", "value": "genero"},
+            {"name": "📝 Buscar por Autor (búsqueda web exacta)", "value": "autor"},
+            Separator(),
+            {"name": "🔄 Actualizar Índice (solo nuevos)", "value": "update"},
+            {"name": "🔁 Reconstruir Índice (desde cero)", "value": "rebuild"},
+        ]
+
+        # Add migration option if JSON file exists
+        if has_json:
+            menu_choices.append({"name": "📦 Migrar JSON a SQLite (legacy)", "value": "migrate"})
+
+        menu_choices.extend([
+            Separator(),
+            {"name": "❌ Salir", "value": "exit"},
+        ])
+
         # Search mode selection
         search_mode = inquirer.select(
             message="¿Qué deseas hacer?",
-            choices=[
-                {"name": "📝 Buscar por Autor", "value": "autor"},
-                {"name": "📚 Buscar por Género", "value": "genero"},
-                Separator(),
-                {"name": f"🔍 Buscar en Catálogo{index_status}", "value": "search"},
-                {"name": "🔄 Actualizar Índice (solo nuevos)", "value": "update"},
-                {"name": "🔁 Reconstruir Índice (desde cero)", "value": "rebuild"},
-                Separator(),
-                {"name": "❌ Salir", "value": "exit"},
-            ],
-            default="autor",
+            choices=menu_choices,
+            default="search",
         ).execute()
 
         if search_mode == "exit":
@@ -530,15 +611,19 @@ def main():
             do_rebuild_index()
             return
 
+        if search_mode == "migrate":
+            do_migrate_json()
+            return
+
         # Initialize downloader for other modes
         downloader = Downloader(proxy=None, download_folder=download_folder, calibre_library=calibre_library)
 
         if search_mode == "autor":
             search_by_author(downloader, dry_run, download_folder, calibre_library)
         elif search_mode == "genero":
-            search_by_genre(downloader, dry_run, download_folder)
+            search_by_genre(downloader, dry_run, download_folder, calibre_library)
         elif search_mode == "search":
-            search_in_catalog(downloader, dry_run, download_folder)
+            search_in_catalog(downloader, dry_run, download_folder, calibre_library)
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Operación cancelada por el usuario.[/yellow]")

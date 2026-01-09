@@ -1,147 +1,105 @@
 """
 Searcher module for fast local catalog searches.
 
-Uses fuzzy matching to find books in the local index without
-making HTTP requests to the website.
+Uses SQLite FTS5 full-text search for fast queries without
+loading the entire catalog into memory.
 """
 
-import json
-from pathlib import Path
 from typing import Optional
 
-from rapidfuzz import fuzz, process
 from rich.console import Console
 from rich.table import Table
 from rich import box
 
-console = Console()
+# Import database module
+import database as db
 
-# Index file path
-INDEX_FILE = Path(__file__).parent.parent / "data" / "catalog_index.json"
+console = Console()
 
 
 class BookSearcher:
     """
-    Fast fuzzy search engine for the local book catalog.
+    Fast search engine for the local book catalog using SQLite FTS5.
 
     Features:
-    - Fuzzy title search
-    - Genre filtering
+    - Fast full-text search on title and author
+    - No memory overhead (queries database directly)
     - Configurable result limits
     """
 
     def __init__(self):
-        self.index = None
-        self._load_index()
-
-    def _load_index(self) -> bool:
-        """Load the index from file."""
-        if not INDEX_FILE.exists():
-            return False
-
-        with open(INDEX_FILE, "r", encoding="utf-8") as f:
-            self.index = json.load(f)
-
-        return True
+        pass  # No need to load anything into memory
 
     def is_available(self) -> bool:
-        """Check if the index is loaded and available."""
-        return self.index is not None and len(self.index.get("books", [])) > 0
+        """Check if the database is available."""
+        return db.is_available()
 
     def get_index_info(self) -> Optional[dict]:
         """Get metadata about the current index."""
-        if not self.index:
+        if not self.is_available():
             return None
-        return self.index.get("metadata")
+        
+        metadata = db.get_metadata()
+        if not metadata:
+            return None
+        
+        return {
+            "last_updated": metadata.get("last_updated"),
+            "total_books": int(metadata.get("total_books", 0)),
+            "total_pages_scraped": int(metadata.get("total_pages_scraped", 0)),
+            "source_url": metadata.get("source_url"),
+        }
 
     def search(
         self,
         query: str,
         search_by: str = "all",
         limit: int = 20,
-        min_score: int = 60,
+        min_score: int = 0,
     ) -> list[dict]:
         """
-        Search for books by title, author, or both using fuzzy matching.
-        
+        Search for books by title, author, or both using FTS5.
+
         Args:
             query: Search query string
             search_by: "title", "author", or "all" (default)
             limit: Maximum number of results
-            min_score: Minimum fuzzy match score (0-100)
-            
+            min_score: Minimum match score (0-100) - used for filtering
+
         Returns:
             List of matching books with scores
         """
         if not self.is_available():
             return []
+
+        results = db.search_books(query, search_by=search_by, limit=limit)
         
-        books = self.index["books"]
-        
-        if not books:
-            return []
-        
-        # Create search strings based on search_by parameter
-        if search_by == "title":
-            search_strings = [book.get('title', '') for book in books]
-        elif search_by == "author":
-            search_strings = [book.get('author', '') for book in books]
-        else:  # "all"
-            search_strings = [
-                f"{book.get('title', '')} {book.get('author', '')}" 
-                for book in books
-            ]
-        
-        # Fuzzy search
-        matches = process.extract(
-            query,
-            search_strings,
-            scorer=fuzz.WRatio,
-            limit=limit * 2  # Get more to filter by score
-        )
-        
-        results = []
-        seen_slugs = set()
-        
-        for _, score, idx in matches:
-            if score >= min_score:
-                book = books[idx]
-                # Avoid duplicates
-                if book["slug"] not in seen_slugs:
-                    seen_slugs.add(book["slug"])
-                    book_copy = book.copy()
-                    book_copy["score"] = score
-                    results.append(book_copy)
-        
-        # Sort by score and limit
-        results.sort(key=lambda x: x["score"], reverse=True)
-        return results[:limit]
-    
+        # Filter by min_score
+        return [r for r in results if r.get("score", 0) >= min_score]
+
     def get_books_by_author(self, author_name: str, limit: int = 50) -> list[dict]:
         """
         Get all books by a specific author.
-        
+
         Args:
             author_name: Author name to search for
             limit: Maximum number of results
-            
+
         Returns:
             List of books by the author
         """
-        results = self.search(author_name, search_by="author", limit=limit, min_score=70)
+        results = self.search(author_name, search_by="author", limit=limit, min_score=50)
         # Sort alphabetically by title for author listings
         results.sort(key=lambda x: x.get("title", ""))
         return results
 
     def get_random_books(self, count: int = 10) -> list[dict]:
-        """Get random books from the index."""
-        import random
-
-        if not self.is_available():
-            return []
-
-        books = self.index["books"]
-        return random.sample(books, min(count, len(books)))
+        """Get random books from the catalog."""
+        return db.get_random_books(count)
+    
+    def get_book_by_slug(self, slug: str) -> Optional[dict]:
+        """Get a single book by its slug."""
+        return db.get_book_by_slug(slug)
 
 
 def display_search_results(results: list[dict], query: str) -> None:
@@ -193,4 +151,3 @@ if __name__ == "__main__":
         quick_search(query)
     else:
         print("Uso: python searcher.py <búsqueda>")
-

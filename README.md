@@ -6,28 +6,45 @@
 
 Herramienta para descargar libros en **español** en formato **EPUB** programáticamente desde [Lectulandia](https://ww3.lectulandia.com/).
 
-El programa permite, a partir de un autor dado, escoger libros de su colección en Lectulandia y descargarlos de forma organizada en un directorio local.
+El programa permite buscar por autor, género o en un catálogo local indexado, seleccionar libros interactivamente y descargarlos de forma organizada.
 
 > El objetivo es facilitar y automatizar el proceso de armado de una biblioteca digital ordenada y rápida.
 
-### ✨ Características v0.2.0
+---
 
-- ✅ **Descarga automática con retry** - Reintentos automáticos con backoff exponencial
-- ✅ **Validación de EPUB** - Verifica integridad de archivos descargados
-- ✅ **Progress bars visuales** - Interfaz moderna con Rich
-- ✅ **Portadas automáticas** - Descarga de Google Books API
-- ✅ **Anti-duplicados inteligente** - Fuzzy matching para evitar descargas repetidas
-- ✅ **Rate limiting adaptativo** - Delays aleatorios para evitar bloqueos
-- ✅ **Modo dry-run** - Vista previa sin descargar
-- ✅ **Integración con Calibre** - Sincronización automática con tu biblioteca
-- ✅ **Configuración flexible** - Personalizable via archivo .env
+## ✨ Características
 
-### 🔧 Tecnologías
+### 📚 Búsqueda y Descarga
+- **Búsqueda por autor** - Encuentra todos los libros de un autor
+- **Búsqueda por género** - Navega libros por categoría
+- **Catálogo local indexado** - Búsqueda rápida offline por título o autor
+- **Selección interactiva** - Checkboxes con accesos de teclado para interacción dinámica
 
-- **httpx** - Cliente HTTP moderno con soporte HTTP/2
-- **BeautifulSoup4** - Parsing HTML robusto
+### 🔧 Robustez
+- **Retry automático** - Reintentos con backoff exponencial
+- **Validación de EPUB** - Verifica integridad de archivos descargados
+- **Anti-duplicados** - Fuzzy matching para evitar descargas repetidas
+- **Rate limiting** - Delays aleatorios y header rotation para evitar bloqueos
+
+### 🎨 Interfaz
+- **CLI interactiva** - Menús con `InquirerPy`
+- **Progress bars** - Visualización con `Rich`
+- **Modo dry-run** - Vista previa sin descargar
+
+### 🔗 Integración
+- **Calibre** - Sincronización automática con tu biblioteca (opcional)
+- **Configuración .env** - Parámetros personalizable
+
+---
+
+## 🛠️ Tecnologías
+
+- **httpx** - Cliente HTTP moderno
+- **BeautifulSoup4** - Parsing HTML
 - **Rich** - Interfaz de terminal moderna
-- **Tenacity** - Retry automático inteligente
+- **InquirerPy** - Menús interactivos
+- **rapidfuzz** - Búsqueda fuzzy rápida
+- **Tenacity** - Retry automático
 - **Pydantic** - Configuración validada
 
 ---
@@ -42,426 +59,237 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # O con brew (macOS)
 brew install uv
-
-# O con pip
-pip install uv
 ```
 
 ### 2. Clonar e Instalar
 
 ```bash
-# Clonar el repositorio
-git clone https://github.com/TU_USUARIO/LectulandiaExtractor.git
+git clone https://github.com/JuanMartinElorriaga/LectulandiaExtractor.git
 cd LectulandiaExtractor
-
-# Instalar dependencias (crea automáticamente el .venv)
 uv sync
 ```
 
 ### 3. Configurar (Opcional)
 
-Edita el archivo `.env` con tus rutas preferidas:
-
 ```bash
+cp .env.example .env
 nano .env
 ```
 
 ```bash
-# Carpeta donde se descargarán los libros
 DEFAULT_DOWNLOAD_FOLDER=/Users/tu_usuario/Downloads/Libros
-
-# Carpeta de tu biblioteca Calibre (opcional)
-DEFAULT_CALIBRE_LIBRARY=/Users/jelorriaga/Documents/Libros
+DEFAULT_CALIBRE_LIBRARY=/Users/tu_usuario/CalibreLibrary
 ```
 
-### 4. ¡Listo! Descarga tu primer libro
+### 4. Ejecutar!
 
 ```bash
-# Opción 1: Usar el script wrapper (más fácil)
-./run.sh --author "gabriel garcia marquez"
-
-# Opción 2: Usar make
-make download AUTHOR="gabriel garcia marquez"
-
-# Opción 3: Modo interactivo
-./run.sh
+sh run.sh
 ```
 
 ---
 
 ## 📖 Uso
 
-### Métodos de Ejecución
-
-#### 1. **Script Wrapper** (Recomendado - Más simple)
-
-```bash
-# Interactivo (te pregunta todo)
-./run.sh
-
-# Con autor específico
-./run.sh --author "julio cortazar"
-
-# Vista previa sin descargar (dry-run)
-./run.sh --author "borges" --dry-run
-
-# Con rutas personalizadas
-./run.sh --author "vargas llosa" \
-  --download_folder "./mis_libros" \
-  --calibre_library "./mi_calibre"
-
-# Con proxy
-./run.sh --author "garcia marquez" --proxy "http://proxy:8080"
-```
-
-#### 2. **Usando Make** (Conveniente)
-
-```bash
-# Ver comandos disponibles
-make help
-
-# Descargar libros
-make download AUTHOR="garcia marquez"
-
-# Vista previa
-make dry-run AUTHOR="borges"
-
-# Ver logs recientes
-make logs
-
-# Limpiar archivos temporales
-make clean
-```
-
-#### 3. **Usando Python directamente**
-
-```bash
-PYTHONPATH=. .venv/bin/python scripts/CLI.py --author "cortazar"
-```
-
-### Opciones del CLI
+### Menú Principal
 
 ```
-Opciones:
-  --author TEXT             Nombre de autor desde el cual descargar libros
-  --download_folder PATH    Directorio local para descargar los libros
-                            (default: desde .env)
-  --calibre_library PATH    Directorio de la librería Calibre
-                            (default: desde .env)
-  --proxy TEXT              Proxy para los requests (ej: http://proxy:8080)
-  --dry-run                 Simular descarga sin descargar archivos (preview)
-  --help                    Mostrar ayuda
+? ¿Qué deseas hacer?
+  📝 Buscar por Autor
+  📚 Buscar por Género
+  ──────────────────────
+  🔍 Buscar en Catálogo (2,500 libros)
+  🔄 Actualizar Índice (solo nuevos)
+  🔁 Reconstruir Índice (desde cero)
+  ──────────────────────
+  ❌ Salir
 ```
 
----
+### 📝 Buscar por Autor
 
-## 🎯 Ejemplos de Uso
+Ingresa el nombre de un autor y selecciona los libros a descargar:
 
-### Ejemplo 1: Descarga básica
+```
+? Nombre del autor: gabriel garcia marquez
 
-```bash
-./run.sh --author "gabriel garcia marquez"
+📚 41 libros encontrados
+
+? Seleccionar libros para descargar
+  ○ Cien Años De Soledad
+  ○ El Amor En Los Tiempos Del Cólera
+  ● Crónica De Una Muerte Anunciada
+  ...
 ```
 
-Resultado:
-- Te muestra lista de 41 libros encontrados
-- Puedes seleccionar: `1,2,3` o `ALL` para todos
-- Descarga con progress bar visual
-- Valida cada EPUB descargado
-- Descarga portadas automáticamente
-- Muestra tabla de resumen al finalizar
+### 📚 Buscar por Género
 
-### Ejemplo 2: Vista previa (dry-run)
+Selecciona un género con búsqueda fuzzy:
 
-```bash
-./run.sh --author "julio cortazar" --dry-run
+```
+? Seleccionar género: fant
+
+❯ Fantasía (1,234 libros)
+  Fantasía Épica
+  Fantasía Urbana
 ```
 
-Perfecto para:
-- Ver qué libros están disponibles
-- Verificar URLs antes de descargar
-- Planear descargas grandes
+### 🔍 Buscar en Catálogo
 
-### Ejemplo 3: Selección específica
+Búsqueda rápida en el índice local:
 
-```bash
-./run.sh --author "borges"
-# Cuando te pregunte, escribe: 1,5,10
+```
+? ¿Qué deseas buscar?
+  📖 Buscar por título
+  ✍️  Buscar por autor
+  🔍 Buscar en todo
+  ← Volver
+
+? Buscar autor: Cortázar
+
+╭─────────── Resultados para: 'Cortázar' ───────────╮
+│  #  │ Título              │ Autor           │ Match │
+├─────┼─────────────────────┼─────────────────┼───────┤
+│  1  │ Rayuela             │ Julio Cortázar  │  95%  │
+│  2  │ Bestiario           │ Julio Cortázar  │  92%  │
+│  3  │ Final Del Juego     │ Julio Cortázar  │  88%  │
+╰───────────────────────────────────────────────────╯
 ```
 
-Descarga solo los libros 1, 5 y 10 de la lista.
+### 🔄 Gestión del Índice
 
-### Ejemplo 4: Integración con Calibre
+- **Actualizar**: Revisa N páginas buscando libros nuevos
+- **Reconstruir**: Elimina el índice y lo construye desde cero
 
-```bash
-./run.sh --author "vargas llosa" \
-  --calibre_library "/Users/tu_usuario/CalibreLibrary"
 ```
+? Páginas a indexar (0 = todas): 20
 
-Al finalizar, te preguntará si quieres sincronizar con Calibre.
+🔁 Reconstruyendo índice desde cero...
 
-**⚠️ Importante**: Cierra Calibre Desktop antes de sincronizar.
+Página 15 ████████████████████ 360 libros   00:25
+
+✅ Índice construido!
+   📚 360 libros indexados
+   📄 15 páginas procesadas
+```
 
 ---
 
 ## 📁 Estructura de Archivos
 
-### Descargados
+### Descargas por Autor
 
 ```
 downloads/
 └── Gabriel Garcia Marquez/
     ├── Cien años de soledad/
-    │   ├── Cien años de soledad.epub
-    │   └── cover.jpg
+    │   └── Cien años de soledad.epub
     └── El amor en los tiempos del cólera/
-        ├── El amor en los tiempos del cólera.epub
-        └── cover.jpg
+        └── El amor en los tiempos del cólera.epub
+```
+
+### Descargas por Género
+
+```
+downloads/
+└── Fantasía/
+    └── Brandon Sanderson/
+        └── El Imperio Final/
+            └── El Imperio Final.epub
 ```
 
 ### Proyecto
 
 ```
 LectulandiaExtractor/
-├── config/               # Configuración centralizada
-│   ├── __init__.py
-│   └── settings.py       # Settings con pydantic
-├── src/                  # Código fuente modular
+├── config/
+│   └── settings.py          # Configuración con pydantic
+├── scripts/
+│   ├── CLI.py               # Interfaz de línea de comandos
+│   ├── extractor.py         # Lógica de descarga
+│   ├── indexer.py           # Indexación del catálogo
+│   ├── searcher.py          # Búsqueda fuzzy
+│   └── calibre_utils.py     # Integración Calibre
+├── src/
 │   ├── infrastructure/
 │   │   └── http/
 │   │       └── http_client.py  # Cliente HTTP con retry
 │   └── utils/
-│       ├── validators.py       # Validación EPUB, sanitización
+│       ├── validators.py       # Validación EPUB
 │       └── delays.py           # Rate limiting
-├── scripts/              # Scripts principales
-│   ├── CLI.py           # Interfaz de línea de comandos
-│   ├── extractor.py     # Lógica de descarga
-│   └── calibre_utils.py # Integración Calibre
-├── logs/                # Logs rotativos (30 días)
-├── .env                 # Tu configuración personal
-├── .env.example         # Plantilla de configuración
-├── run.sh              # Script wrapper
-├── Makefile            # Comandos make
+├── data/
+│   └── catalog_index.json   # Índice local (gitignored)
+├── logs/                    # Logs rotativos
+├── .env                     # Tu configuración
 └── README.md
 ```
 
 ---
 
-## 🔧 Configuración Avanzada
+## 🔧 Configuración
 
 ### Archivo .env
 
-Personaliza el comportamiento editando `.env`:
-
 ```bash
-# Rate Limiting - Ajusta según tu conexión
-REQUEST_DELAY_MIN=2.0      # Delay mínimo entre requests (segundos)
-REQUEST_DELAY_MAX=5.0      # Delay máximo entre requests
-MAX_RETRIES=3              # Intentos antes de fallar
+# Carpetas
+DEFAULT_DOWNLOAD_FOLDER=/Users/tu_usuario/Downloads/Libros
+DEFAULT_CALIBRE_LIBRARY=/Users/tu_usuario/CalibreLibrary
 
-# Fuzzy Matching - Qué tan similar para considerar duplicado (0-100)
+# Rate Limiting
+REQUEST_DELAY_MIN=2.0
+REQUEST_DELAY_MAX=5.0
+MAX_RETRIES=3
+
+# Fuzzy Matching (0-100)
 AUTHOR_MATCH_THRESHOLD=90
 BOOK_MATCH_THRESHOLD=90
 
-# Timeouts
-DOWNLOAD_TIMEOUT=180       # Timeout para descargar EPUB (segundos)
+# Timeouts (segundos)
+DOWNLOAD_TIMEOUT=180
 REQUEST_TIMEOUT=30
-CONNECT_TIMEOUT=10
-
-# Límites
-MAX_PAGINATION_DEPTH=50    # Máximo de páginas a scrapear
 ```
-
-### Logs
-
-Los logs se guardan automáticamente en `logs/`:
-
-```bash
-# Ver logs recientes
-tail -f logs/downloader_$(date +%Y-%m-%d).log
-
-# O con make
-make logs
-```
-
-Rotación automática:
-- Nueva archivo cada medianoche
-- Compresión ZIP automática
-- Retención: 30 días
-
----
-
-## ⚙️ Cómo Funciona
-
-### Flujo de Descarga
-
-1. **Scraping del autor**
-   - Busca autor en Lectulandia
-   - Scrapea todas las páginas (paginación automática)
-   - Extrae URLs de libros
-
-2. **Selección de libros**
-   - Muestra lista interactiva
-   - Usuario selecciona cuáles descargar
-
-3. **Proceso de descarga** (por cada libro)
-   - Obtiene link de descarga desde Lectulandia
-   - Navega a antupload.com
-   - Extrae link final con anti-bot protection
-   - Descarga EPUB con retry automático
-   - **Valida** que sea un EPUB válido
-   - Descarga portada desde Google Books API
-   - Guarda en estructura de carpetas organizada
-
-4. **Fuzzy Matching Anti-duplicados**
-   - Compara autor con carpetas existentes en Calibre
-   - Compara libro con libros existentes del autor
-   - Omite si ya existe (configurable threshold)
-
-5. **Integración Calibre** (opcional)
-   - Sincroniza carpeta completa del autor
-   - Usa `calibredb` CLI
-
----
-
-## 🛡️ Seguridad y Robustez
-
-### Características de Seguridad
-
-- ✅ **Sanitización de paths** - Previene path traversal attacks
-- ✅ **Validación de EPUB** - Verifica estructura ZIP + mimetype
-- ✅ **User-Agent rotation** - Evita detección como bot
-- ✅ **Rate limiting inteligente** - Delays aleatorios
-- ✅ **Retry automático** - 3 intentos con backoff exponencial
-
-### Manejo de Errores
-
-- **Timeout**: Reintentos automáticos con backoff
-- **Rate limiting (429)**: Reintenta con delay mayor
-- **EPUB corrupto**: Elimina y reporta error
-- **Error en un libro**: Continúa con los siguientes
 
 ---
 
 ## 🐛 Troubleshooting
 
-### Problema: "No module named 'src'"
+### "No module named 'src'"
 
 ```bash
-# Asegúrate de usar PYTHONPATH=. o el script wrapper
-./run.sh  # En lugar de python scripts/CLI.py
+# Ejecuta desde el bash script la carpeta scripts, no desde python directamente
+sh bash.sh
 ```
 
-### Problema: "calibredb: command not found"
+### "calibredb: command not found"
 
 ```bash
-# Opción 1: Agregar Calibre al PATH (macOS)
+# macOS: Agregar Calibre al PATH
 export PATH="/Applications/calibre.app/Contents/MacOS:$PATH"
-
-# Opción 2: No uses la opción de sincronización con Calibre
 ```
 
-### Problema: Descargas muy lentas
+### Descargas fallidas
 
 ```bash
-# Reduce los delays en .env
-REQUEST_DELAY_MIN=1.0
-REQUEST_DELAY_MAX=2.0
-```
-
-⚠️ **Nota**: Delays muy bajos pueden causar bloqueos del sitio.
-
-### Problema: Muchos libros fallidos
-
-```bash
-# Aumenta los delays en .env
+# Aumenta delays en .env
 REQUEST_DELAY_MIN=3.0
 REQUEST_DELAY_MAX=7.0
-MAX_RETRIES=5
 ```
-
----
-
-## 📊 Logs y Monitoreo
-
-### Ver progreso en tiempo real
-
-```bash
-# En una terminal separada
-tail -f logs/downloader_$(date +%Y-%m-%d).log
-```
-
-### Formato de logs
-
-```
-2026-01-08 22:11:43 | INFO | extractor:download_book - ✓ Descargado: El amor...
-2026-01-08 22:11:44 | WARNING | http_client:get - Retry 1/3 después de error...
-2026-01-08 22:11:45 | ERROR | validators:validate_epub - EPUB corrupto...
-```
-
----
-
-## 🚧 Limitaciones Conocidas
-
-- Solo descarga formato EPUB (no MOBI, PDF, etc)
-- Requiere que Calibre Desktop esté cerrado para sincronizar
-- Dependiente de la estructura HTML de Lectulandia (puede cambiar)
-- Sin soporte para búsqueda por género (próximamente)
-
----
-
-## 🗺️ Roadmap Futuro
-
-- [ ] Tests unitarios con pytest
-- [ ] Búsqueda por género/título
-- [ ] Exportación de resultados a CSV/JSON
-- [ ] Modo sync incremental (solo libros nuevos)
-- [ ] Soporte para múltiples formatos (MOBI, PDF)
-- [ ] GUI web con FastAPI
-- [ ] Descargas concurrentes (async)
 
 ---
 
 ## 🤝 Contribuir
 
-Las contribuciones son bienvenidas! Por favor:
-
 1. Fork el proyecto
-2. Crea una rama para tu feature (`git checkout -b feature/AmazingFeature`)
-3. Commit tus cambios (`git commit -m 'Add: AmazingFeature'`)
-4. Push a la rama (`git push origin feature/AmazingFeature`)
+2. Crea una rama (`git checkout -b feature/AmazingFeature`)
+3. Commit cambios (`git commit -m 'Add: AmazingFeature'`)
+4. Push (`git push origin feature/AmazingFeature`)
 5. Abre un Pull Request
 
 ---
 
 ## 📄 Licencia
 
-Este proyecto es software libre.
+Software libre. _Forked_ desde [LectulandiaExtractor](https://github.com/Sarrablo/LectulandiaExtractor).
 
-_Forked_ desde repo original [LectulandiaExtractor](https://github.com/Sarrablo/LectulandiaExtractor).
-
----
-
-## 🙏 Agradecimientos
-
-- [Lectulandia](https://ww3.lectulandia.com/) - Por hacer disponible literatura en español
-- [Google Books API](https://developers.google.com/books) - Por las portadas
-- [Calibre](https://calibre-ebook.com/) - Por el mejor gestor de ebooks
-
----
-
-## 📚 Referencias
-
-- [LiteratureMap](https://www.literature-map.com/) - Descubre autores similares
-- [AI-Book-Downloader](https://github.com/JuanMartinElorriaga/ai-book-downloader) - Proyecto relacionado
-
----
-
-## Screenshots
-
-![CLI con Rich](resources/cli.png)
-![Biblioteca Local](resources/subfolders.png)
-![Libro Descargado](resources/book.png)
 
 ---
 
