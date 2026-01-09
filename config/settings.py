@@ -1,6 +1,5 @@
 """Centralized configuration for LectulandiaExtractor."""
-from pydantic_settings import BaseSettings
-from pathlib import Path
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -35,10 +34,11 @@ class Settings(BaseSettings):
     # Parser
     HTML_PARSER: str = "lxml"  # Faster than html.parser
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = 'utf-8'
-        extra = 'ignore'
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 # Singleton instance
