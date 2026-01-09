@@ -16,6 +16,8 @@ from config.settings import settings
 from searcher import BookSearcher, display_search_results
 from indexer import rebuild_index, update_index, get_index_info
 import database as db
+from download_tracker import DownloadTracker
+from operations import get_all_resumable_operations, DownloadOperation
 
 console = Console()
 
@@ -534,6 +536,252 @@ def do_migrate_json():
         console.print(f"[red]Error durante la migración: {e}[/red]")
 
 
+def show_download_status():
+    """Show download statistics from the database."""
+    console.print("\n[bold cyan]📊 Estado de Descargas[/bold cyan]\n")
+
+    try:
+        stats = db.get_download_stats()
+
+        total_attempted = stats.get('total_attempted', 0)
+        downloaded = stats.get('downloaded', 0)
+        failed = stats.get('failed', 0)
+        skipped = stats.get('skipped', 0)
+        pending = stats.get('pending', 0)
+
+        if total_attempted == 0:
+            console.print("[dim]No hay descargas registradas aún.[/dim]")
+            console.print(f"[dim]Catálogo disponible: {stats.get('total_catalog', 0):,} libros[/dim]\n")
+            return
+
+        table = Table(box=box.ROUNDED, show_header=True, header_style="bold")
+        table.add_column("Estado", style="cyan")
+        table.add_column("Cantidad", justify="right")
+
+        table.add_row("✅ Descargados", f"[green]{downloaded:,}[/green]")
+        table.add_row("⏭️  Omitidos (duplicados)", f"[blue]{skipped:,}[/blue]")
+        table.add_row("❌ Fallidos", f"[red]{failed:,}[/red]")
+        if pending > 0:
+            table.add_row("⏳ Pendientes", f"[yellow]{pending:,}[/yellow]")
+
+        console.print(table)
+
+        # Calculate totals
+        exitosos = downloaded + skipped  # Both count as "success"
+        procesados = downloaded + skipped + failed
+
+        console.print(f"\n[dim]Total intentados: {total_attempted:,} | Procesados: {procesados:,}[/dim]")
+
+        # Show percentage (success rate)
+        percentage = stats.get('percentage', 0)
+        console.print(f"[bold]Tasa de éxito:[/bold] {percentage:.1f}% ({exitosos:,}/{procesados:,})\n")
+
+        # Show progress bar
+        from rich.progress import Progress, BarColumn, TextColumn
+        with Progress(
+            TextColumn("[bold blue]Éxito"),
+            BarColumn(bar_width=40, complete_style="green", finished_style="green"),
+            TextColumn("[cyan]{task.percentage:.1f}%[/cyan]"),
+            console=console,
+            transient=False,
+        ) as progress:
+            task = progress.add_task("", total=100, completed=percentage)
+
+        # Show catalog reference
+        console.print(f"\n[dim]Referencia: {stats.get('total_catalog', 0):,} libros en catálogo[/dim]")
+
+    except Exception as e:
+        console.print(f"[red]Error obteniendo estadísticas: {e}[/red]")
+
+    console.print()
+
+
+def resume_operations(downloader: Downloader = None, download_folder: str = None, calibre_library: str = None):
+    """Show resumable operations and allow user to resume one."""
+    console.print("\n[bold cyan]🔄 Operaciones Resumibles[/bold cyan]\n")
+
+    try:
+        operations = get_all_resumable_operations()
+
+        if not operations:
+            console.print("[dim]No hay operaciones pendientes para reanudar.[/dim]\n")
+            return
+
+        # Build choices for selection
+        choices = []
+        for op in operations:
+            progress = op['progress']
+            total = progress.get('total', 0)
+            pending = progress.get('pending', 0)
+            completed = progress.get('completed', 0) + progress.get('failed', 0) + progress.get('skipped', 0)
+
+            # Format progress
+            if total > 0:
+                pct = (completed / total) * 100
+                progress_str = f"{completed}/{total} ({pct:.0f}%)"
+            else:
+                progress_str = f"{completed} procesados"
+
+            # Format time
+            started = op['started_at'][:16].replace('T', ' ') if op.get('started_at') else 'Desconocido'
+
+            name = f"{op['description']} - {progress_str} - Iniciado: {started}"
+            choices.append({"name": name, "value": op})
+
+        choices.append(Separator())
+        choices.append({"name": "← Cancelar", "value": None})
+
+        # Let user select
+        selected = inquirer.select(
+            message="Seleccionar operación a reanudar",
+            choices=choices,
+        ).execute()
+
+        if not selected:
+            console.print("[dim]Operación cancelada.[/dim]")
+            return
+
+        op_type = selected['type']
+        op_id = selected['id']
+        context = selected.get('context', {})
+
+        console.print(f"\n[cyan]Reanudando: {selected['description']}[/cyan]\n")
+
+        if op_type == 'batch_download':
+            # Need downloader for batch downloads
+            if not downloader:
+                console.print("[yellow]Se requiere configuración de descarga.[/yellow]")
+                # Get download folder if not provided
+                if not download_folder:
+                    download_folder = inquirer.filepath(
+                        message="Carpeta de descarga",
+                        default=settings.DEFAULT_DOWNLOAD_FOLDER,
+                        only_directories=True,
+                    ).execute()
+
+                calibre_library = inquirer.filepath(
+                    message="Librería Calibre (Enter para omitir)",
+                    default=settings.DEFAULT_CALIBRE_LIBRARY or "",
+                    only_directories=True,
+                ).execute()
+
+                downloader = Downloader(proxy=None, download_folder=download_folder, calibre_library=calibre_library)
+
+            # Resume the download operation
+            operation = DownloadOperation(op_id)
+            pending_urls = operation.get_pending_items()
+
+            if not pending_urls:
+                console.print("[green]✓ Esta operación ya está completa.[/green]")
+                operation.complete()
+                return
+
+            console.print(f"[cyan]📥 {len(pending_urls)} libros pendientes[/cyan]\n")
+
+            confirm = inquirer.confirm(
+                message=f"¿Continuar descarga de {len(pending_urls)} libros?",
+                default=True,
+            ).execute()
+
+            if not confirm:
+                console.print("[dim]Operación cancelada.[/dim]")
+                return
+
+            # Resume download with progress
+            author = context.get('author')
+            folder_name = context.get('folder_name')
+            direct_mode = context.get('direct_mode', False)
+
+            results = download_with_progress(
+                downloader, pending_urls,
+                author=author, folder_name=folder_name, direct_mode=direct_mode
+            )
+
+            # Mark items in operation
+            for url in results['exitosos']:
+                operation.mark_item_completed(url['url'] if isinstance(url, dict) else url)
+            for url in results['omitidos']:
+                operation.mark_item_skipped(url if isinstance(url, str) else url)
+            for item in results['fallidos']:
+                operation.mark_item_failed(item['url'], item.get('error', 'Unknown error'))
+
+            operation.complete()
+            show_results(context.get('display_name', 'Reanudada'), [], results)
+
+        elif op_type == 'index_build':
+            # Resume index build
+            try:
+                rebuild_index(resume=True)
+            except KeyboardInterrupt:
+                console.print("[yellow]Interrupción detectada. Progreso guardado.[/yellow]")
+
+        elif op_type == 'index_update':
+            # Resume index update
+            try:
+                update_index(resume=True)
+            except KeyboardInterrupt:
+                console.print("[yellow]Interrupción detectada. Progreso guardado.[/yellow]")
+
+        else:
+            console.print(f"[yellow]Tipo de operación no soportado: {op_type}[/yellow]")
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+
+def sync_downloads(download_folder: str = None):
+    """Sync filesystem downloads with the database."""
+    console.print("\n[bold cyan]📁 Sincronizar Descargas[/bold cyan]\n")
+    console.print("[dim]Escanea la carpeta de descargas y registra los libros existentes en la base de datos.[/dim]")
+    console.print("[dim]Útil para migrar desde detección por filesystem a detección por BD.[/dim]\n")
+
+    # Get download folder
+    if not download_folder:
+        download_folder = inquirer.filepath(
+            message="Carpeta de descargas a escanear",
+            default=settings.DEFAULT_DOWNLOAD_FOLDER,
+            only_directories=True,
+        ).execute()
+
+    if not os.path.exists(download_folder):
+        console.print(f"[red]La carpeta no existe: {download_folder}[/red]")
+        return
+
+    confirm = inquirer.confirm(
+        message=f"¿Escanear {download_folder} y registrar EPUBs encontrados?",
+        default=True,
+    ).execute()
+
+    if not confirm:
+        console.print("[dim]Operación cancelada.[/dim]")
+        return
+
+    try:
+        tracker = DownloadTracker()
+
+        # Show progress during scan
+        with console.status("[cyan]Escaneando carpeta...[/cyan]", spinner="dots") as status:
+            def progress_callback(current, total):
+                status.update(f"[cyan]Procesando {current}/{total}...[/cyan]")
+
+            result = tracker.sync_with_filesystem(download_folder, progress_callback)
+
+        # Show results
+        table = Table(box=box.ROUNDED, show_header=True, header_style="bold")
+        table.add_column("Resultado", style="cyan")
+        table.add_column("Cantidad", justify="right")
+
+        table.add_row("📚 EPUBs encontrados", f"[white]{result['found']}[/white]")
+        table.add_row("✅ Nuevos registrados", f"[green]{result['added']}[/green]")
+        table.add_row("⏭️  Ya registrados", f"[yellow]{result['already_tracked']}[/yellow]")
+
+        console.print(table)
+        console.print(f"\n[green bold]✅ Sincronización completada![/green bold]\n")
+
+    except Exception as e:
+        console.print(f"[red]Error durante sincronización: {e}[/red]")
+
+
 def main():
     """Main CLI entry point."""
     console.clear()
@@ -573,11 +821,19 @@ def main():
         json_file = Path(__file__).parent.parent / "data" / "catalog_index.json"
         has_json = json_file.exists()
 
+        # Check for resumable operations
+        resumable_ops = get_all_resumable_operations()
+        resume_status = f" ({len(resumable_ops)} pendientes)" if resumable_ops else ""
+
         # Build menu choices
         menu_choices = [
             {"name": f"🔍 Buscar en Catálogo{index_status}", "value": "search"},
             {"name": "📚 Buscar por Género (listado web)", "value": "genero"},
             {"name": "📝 Buscar por Autor (búsqueda web exacta)", "value": "autor"},
+            Separator(),
+            {"name": "📊 Estado de descargas", "value": "status"},
+            {"name": f"⏯️  Reanudar operación{resume_status}", "value": "resume"},
+            {"name": "📁 Sincronizar descargas (filesystem → BD)", "value": "sync"},
             Separator(),
             {"name": "🔄 Actualizar Índice (solo nuevos)", "value": "update"},
             {"name": "🔁 Reconstruir Índice (desde cero)", "value": "rebuild"},
@@ -603,6 +859,14 @@ def main():
             console.print("[dim]¡Hasta luego! 👋[/dim]")
             return
 
+        if search_mode == "status":
+            show_download_status()
+            return
+
+        if search_mode == "sync":
+            sync_downloads(download_folder)
+            return
+
         if search_mode == "update":
             do_update_index()
             return
@@ -615,10 +879,12 @@ def main():
             do_migrate_json()
             return
 
-        # Initialize downloader for other modes
+        # Initialize downloader for modes that need it
         downloader = Downloader(proxy=None, download_folder=download_folder, calibre_library=calibre_library)
 
-        if search_mode == "autor":
+        if search_mode == "resume":
+            resume_operations(downloader, download_folder, calibre_library)
+        elif search_mode == "autor":
             search_by_author(downloader, dry_run, download_folder, calibre_library)
         elif search_mode == "genero":
             search_by_genre(downloader, dry_run, download_folder, calibre_library)

@@ -13,6 +13,8 @@ from src.infrastructure.http.http_client import HTTPClient
 from src.utils.validators import validate_epub, sanitize_path
 from src.utils.delays import smart_delay
 from config.settings import settings
+from download_tracker import DownloadTracker
+from operations import DownloadOperation
 
 # Set logger to log into an external file as well as stream in the console
 logger.remove()
@@ -41,6 +43,7 @@ class Downloader():
         self.download_folder = download_folder
         self.calibre_library = calibre_library
         self.http_client = HTTPClient(proxy=proxy)
+        self.tracker = DownloadTracker()
 
     def _get_existing_author_folder(self, author_name_cleaned: str) -> tuple[str, list[str]]:
         """Busca coincidencia fuzzy en Calibre; si hay match, devuelve también subcarpetas"""
@@ -298,9 +301,20 @@ class Downloader():
             timeout: Download timeout in seconds
             folder_name: Optional folder name override (used for genre mode)
             direct_mode: If True, creates Author/Book structure directly in download_folder
+
+        Returns:
+            Tuple (filename, size) on success, None if skipped/failed
         """
         if timeout is None:
             timeout = settings.DOWNLOAD_TIMEOUT
+
+        # Extract slug from URL for tracking
+        slug = DownloadTracker.extract_slug_from_url(download_url)
+
+        # Check download tracker first (faster than filesystem)
+        if slug and self.tracker.is_downloaded(slug):
+            logger.info(f'Libro ya descargado (tracker): {slug}')
+            return None
 
         try:
             logger.info(f'Descargando desde: {download_url}')
@@ -411,6 +425,24 @@ class Downloader():
                 os.remove(file_path)
                 raise ValueError(f"El archivo descargado no es un EPUB válido")
 
+            # Record successful download in tracker
+            if slug:
+                download_mode = 'genre' if folder_name else ('catalog' if direct_mode else 'author')
+                try:
+                    relative_path = str(file_path.relative_to(self.download_folder))
+                except ValueError:
+                    relative_path = str(file_path)
+
+                self.tracker.record_download(
+                    slug=slug,
+                    title=book_name,
+                    author=file_author,
+                    source_url=download_url,
+                    file_path=relative_path,
+                    file_size=file_path.stat().st_size,
+                    download_mode=download_mode
+                )
+
             return filename, size
 
         except httpx.TimeoutException:
@@ -420,18 +452,26 @@ class Downloader():
             logger.error(f'Error descargando libro: {str(e)}')
             return None
 
-    def batch_download_books(self, download_urls: list, author: str = None, folder_name: str = None, direct_mode: bool = False) -> dict:
+    def batch_download_books(
+        self,
+        download_urls: list,
+        author: str = None,
+        folder_name: str = None,
+        direct_mode: bool = False,
+        resume_operation_id: int = None
+    ) -> dict:
         """
-        Download all books from a list with result tracking.
+        Download all books from a list with result tracking and checkpoint/resume support.
 
         Args:
             download_urls: List of download URLs
             author: Author name (for author mode)
             folder_name: Folder name override (for genre mode)
             direct_mode: If True, creates Author/Book structure directly in download_folder
+            resume_operation_id: If provided, resume this specific operation
 
         Returns:
-            dict with keys: 'exitosos', 'fallidos', 'omitidos'
+            dict with keys: 'exitosos', 'fallidos', 'omitidos', 'operation_id'
         """
         results = {
             'exitosos': [],
@@ -439,11 +479,41 @@ class Downloader():
             'omitidos': []
         }
 
-        total = len(download_urls)
         display_name = folder_name if folder_name else (author.title() if author else "Catálogo")
 
-        for i, url in enumerate(download_urls, 1):
-            logger.info(f"Procesando libro {i}/{total}")
+        # Build context for operation tracking
+        context = {
+            'author': author,
+            'folder_name': folder_name,
+            'direct_mode': direct_mode,
+            'display_name': display_name
+        }
+
+        # Create or resume operation
+        try:
+            if resume_operation_id:
+                operation = DownloadOperation(resume_operation_id)
+                logger.info(f"Reanudando operación {resume_operation_id}")
+            else:
+                operation = DownloadOperation.resume_or_create(download_urls, context)
+                logger.info(f"Operación de descarga: {operation.operation_id}")
+
+            # Get pending URLs (not yet processed)
+            pending_urls = operation.get_pending_items()
+            total_pending = len(pending_urls)
+            total_original = len(download_urls)
+
+            if total_pending < total_original:
+                logger.info(f"Reanudando: {total_original - total_pending} ya procesados, {total_pending} pendientes")
+
+        except Exception as e:
+            logger.warning(f"Error creando operación, continuando sin tracking: {e}")
+            operation = None
+            pending_urls = download_urls
+            total_pending = len(pending_urls)
+
+        for i, url in enumerate(pending_urls, 1):
+            logger.info(f"Procesando libro {i}/{total_pending}")
 
             try:
                 result = self.download_book(url, author=author, folder_name=folder_name, direct_mode=direct_mode)
@@ -451,18 +521,31 @@ class Downloader():
                 if result is None:
                     results['omitidos'].append(url)
                     logger.info(f"Libro omitido (ya existe o duplicado)")
+                    if operation:
+                        operation.mark_item_skipped(url, 'duplicate')
                 else:
-                    results['exitosos'].append({'url': url, 'filename': result[0], 'size': result[1]})
+                    result_data = {'filename': result[0], 'size': result[1]}
+                    results['exitosos'].append({'url': url, **result_data})
                     logger.info(f"✓ Descargado: {result[0]}")
+                    if operation:
+                        operation.mark_item_completed(url, result_data)
 
             except Exception as e:
-                results['fallidos'].append({'url': url, 'error': str(e)})
-                logger.error(f"✗ Error en {url}: {str(e)}")
+                error_msg = str(e)
+                results['fallidos'].append({'url': url, 'error': error_msg})
+                logger.error(f"✗ Error en {url}: {error_msg}")
+                if operation:
+                    operation.mark_item_failed(url, error_msg)
                 # Continue with next book without interrupting batch
 
             # Smart delay between downloads
-            if i < total:  # Don't delay after last book
+            if i < total_pending:  # Don't delay after last book
                 smart_delay()  # Uses configured defaults
+
+        # Mark operation as completed
+        if operation:
+            operation.complete()
+            results['operation_id'] = operation.operation_id
 
         # Final summary
         logger.info(f"\n{'='*50}")
