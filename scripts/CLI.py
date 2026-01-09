@@ -585,7 +585,7 @@ def main():
 
         # Add migration option if JSON file exists
         if has_json:
-            menu_choices.append({"name": "📦 Migrar JSON a SQLite", "value": "migrate"})
+            menu_choices.append({"name": "📦 Migrar JSON a SQLite (legacy)", "value": "migrate"})
 
         menu_choices.extend([
             Separator(),
