@@ -69,7 +69,7 @@ DEFAULT_DOWNLOAD_FOLDER=/Users/TU_USUARIO/MisCarpeta/Libros
 
 ### "No module named 'src'"
 ```bash
-# Usa siempre ./run.sh en lugar de python directo
+# Usa siempre sh ./run.sh en lugar de python directo
 ./run.sh --author "garcia marquez"
 ```
 
