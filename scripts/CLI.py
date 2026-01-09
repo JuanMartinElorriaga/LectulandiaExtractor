@@ -1,65 +1,549 @@
-import click
-from urllib.parse import urlparse, unquote
-from extractor import Downloader
 import os
+from urllib.parse import urlparse, unquote
 
+from InquirerPy import inquirer
+from InquirerPy.separator import Separator
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn, TaskProgressColumn
+from rich.text import Text
+from rich import box
+
+from extractor import Downloader
 from calibre_utils import add_folder_to_calibre
+from config.settings import settings
+from searcher import BookSearcher, display_search_results
+from indexer import rebuild_index, update_index, get_index_info
 
-@click.command()
-@click.option('--author', prompt='Nombre de autor', help='Nombre de autor desde el cual descargar libros')
-@click.option('--download_folder', prompt='Path de descarga', default=r'C:\Users\juanm\Documents\LIBROS', help='Directorio local en donde descargar los libros')
-@click.option('--calibre_library', prompt='Path de base Calibre', default=r"D:\CalibreLib\Calibre Library", help='Directorio de la libreria Calibre')
-@click.option('--proxy', default=None, help='Proxy para los requests')
-def main(author, proxy, download_folder, calibre_library):
-    downloader = Downloader(proxy, download_folder, calibre_library)
-
-    try:
-        author_url = downloader.get_author_url(author)
-        click.echo(f'URL del autor: {author_url}')
-
-        urls_from_author = downloader.get_urls_from_author_url(author_url)
-        click.echo(f'Total de links encontrados para {author.title()}: {len(urls_from_author)}')
-
-        # Display the list of URLs to the user
-        click.echo(click.style('\nLista de libros:', fg='cyan'))
-
-        for i, url in enumerate(urls_from_author, start=1):
-            book = unquote(urlparse(url).path.strip('/').split('/')[-1]).replace('-', ' ')
-            click.echo(f"{click.style(i, fg='yellow')}. {click.style(book, fg='yellow')}")
+console = Console()
 
 
-        # Prompt the user to select URLs for download
-        selected_indices = click.prompt(
-            'Seleccionar libro(s) para descargar (ej., 1,2,3, o ALL para todos)',
-            type         = str,
-            default      = 'ALL',
-            show_default = True
+def show_banner():
+    """Display welcome banner."""
+    banner = Text()
+    banner.append("📚 ", style="bold")
+    banner.append("Lectulandia Extractor", style="bold cyan")
+    banner.append("\n")
+    banner.append("Descarga libros en español fácilmente", style="dim")
+
+    console.print(Panel(
+        banner,
+        border_style="cyan",
+        padding=(1, 2),
+    ))
+    console.print()
+
+
+def show_config_panel(download_folder: str, calibre_library: str):
+    """Display current configuration."""
+    table = Table(box=box.ROUNDED, show_header=False, border_style="dim")
+    table.add_column("Key", style="dim")
+    table.add_column("Value", style="cyan")
+
+    table.add_row("📁 Carpeta descarga", download_folder)
+    table.add_row("📖 Librería Calibre", calibre_library or "[dim]No configurada[/dim]")
+
+    console.print(Panel(table, title="[bold]Configuración[/bold]", border_style="blue", padding=(0, 1)))
+    console.print()
+
+
+def extract_book_name(url: str) -> str:
+    """Extract readable book name from URL."""
+    return unquote(urlparse(url).path.strip('/').split('/')[-1]).replace('-', ' ').title()
+
+
+def select_books_interactive(book_urls: list, title: str) -> list:
+    """Interactive book selection with checkboxes."""
+    choices = [
+        {"name": f"{extract_book_name(url)}", "value": url}
+        for url in book_urls
+    ]
+
+    console.print(f"\n[cyan]📚 {len(book_urls)} libros encontrados en {title}[/cyan]\n")
+
+    selected = inquirer.checkbox(
+        message="Seleccionar libros para descargar",
+        choices=choices,
+        cycle=True,
+        instruction="(↑↓ navegar, espacio marcar, ctrl+a todos, enter confirmar)",
+        keybindings={
+            "toggle-all-true": [{"key": "c-a"}],  # Ctrl+A para seleccionar todos
+            "toggle-all-false": [{"key": "c-a"}],  # Ctrl+A también deselecciona todos
+        },
+    ).execute()
+
+    return selected if selected else []
+
+
+def show_books_table(book_urls: list, title: str):
+    """Display books in a styled table."""
+    table = Table(
+        title=f"[bold cyan]📚 Libros en {title}[/bold cyan]",
+        box=box.ROUNDED,
+        show_lines=False,
+        header_style="bold magenta",
+    )
+    table.add_column("#", style="dim", width=4)
+    table.add_column("Título", style="white")
+
+    for i, url in enumerate(book_urls, start=1):
+        book_name = extract_book_name(url)
+        table.add_row(str(i), book_name)
+
+    console.print(table)
+    console.print()
+
+
+def download_with_progress(downloader: Downloader, download_links: list, author: str = None, folder_name: str = None) -> dict:
+    """Download books with a nice progress display."""
+    display_name = folder_name if folder_name else author.title()
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(bar_width=40),
+        TaskProgressColumn(),
+        TimeRemainingColumn(),
+        console=console,
+        transient=False,
+    ) as progress:
+        task = progress.add_task(
+            f"Descargando de {display_name}",
+            total=len(download_links)
         )
 
-        # Filter the URLs based on user selection
-        if selected_indices.upper() == 'ALL':
-            selected_urls = urls_from_author
+        results = {
+            'exitosos': [],
+            'fallidos': [],
+            'omitidos': []
+        }
+
+        for url in download_links:
+            try:
+                result = downloader.download_book(url, author=author, folder_name=folder_name)
+
+                if result is None:
+                    results['omitidos'].append(url)
+                else:
+                    results['exitosos'].append({'url': url, 'filename': result[0], 'size': result[1]})
+            except Exception as e:
+                results['fallidos'].append({'url': url, 'error': str(e)})
+
+            progress.update(task, advance=1)
+
+    return results
+
+
+def show_results(title: str, failed_links: list, results: dict):
+    """Display download results in a styled panel."""
+    all_failures = failed_links + results['fallidos']
+
+    # Summary table
+    table = Table(box=box.ROUNDED, show_header=True, header_style="bold")
+    table.add_column("Estado", style="bold")
+    table.add_column("Cantidad", justify="center")
+
+    table.add_row("✅ Exitosos", f"[green bold]{len(results['exitosos'])}[/green bold]")
+    table.add_row("⏭️  Omitidos", f"[yellow]{len(results['omitidos'])}[/yellow]")
+    table.add_row("❌ Fallidos", f"[red]{len(all_failures)}[/red]")
+
+    console.print(Panel(
+        table,
+        title=f"[bold]Resumen - {title}[/bold]",
+        border_style="green" if not all_failures else "yellow",
+        padding=(1, 2),
+    ))
+
+    # Show failed books if any
+    if all_failures:
+        console.print("\n[red bold]Libros fallidos:[/red bold]")
+        for item in all_failures:
+            console.print(f"  [red]•[/red] {item.get('url', 'URL desconocida')}")
+            if 'error' in item:
+                console.print(f"    [dim]{item['error']}[/dim]")
+
+    console.print("\n[green bold]✨ Proceso finalizado![/green bold]\n")
+
+
+def search_by_author(downloader: Downloader, dry_run: bool, download_folder: str, calibre_library: str):
+    """Handle author search mode."""
+    author = inquirer.text(
+        message="Nombre del autor",
+        validate=lambda x: len(x) > 0,
+        invalid_message="El nombre no puede estar vacío",
+    ).execute()
+
+    with console.status(f"[cyan]Buscando libros de {author.title()}...[/cyan]", spinner="dots"):
+        author_url = downloader.get_author_url(author)
+        book_urls = downloader.get_urls_from_author_url(author_url)
+
+    console.print(f"[green]✓[/green] URL del autor: [dim]{author_url}[/dim]")
+
+    # Interactive book selection
+    selected_urls = select_books_interactive(book_urls, author.title())
+    if not selected_urls:
+        # If nothing selected, ask if they want all
+        select_all = inquirer.confirm(
+            message="No seleccionaste ningún libro. ¿Descargar todos?",
+            default=False,
+        ).execute()
+        if select_all:
+            selected_urls = book_urls
         else:
-            selected_indices = selected_indices.split(',')
-            selected_urls    = [urls_from_author[int(index) - 1] for index in selected_indices]
+            console.print("[yellow]Operación cancelada.[/yellow]")
+            return
 
-        #click.echo(f'Libros seleccionados: {selected_urls}')
-        download_links = downloader.get_batch_download_links(selected_urls)
-        click.echo(f'Total de libros a descargar de {author.title()}: {len(download_links)}')
+    # Get download links
+    with console.status("[cyan]Obteniendo links de descarga...[/cyan]", spinner="dots"):
+        download_links, failed_links = downloader.get_batch_download_links(selected_urls)
 
-        if not click.confirm('Quieres comenzar con la descarga?', default=True):
-            raise click.Abort("❌ Descarga abortada por el usuario.")
+    console.print(f"\n[cyan]📥 {len(download_links)} libros listos para descargar[/cyan]")
+    if failed_links:
+        console.print(f"[yellow]⚠️  {len(failed_links)} no pudieron obtener link[/yellow]")
 
-        downloader.batch_download_books(download_links, author)
-        click.echo(click.style('✔ Descarga finalizada!', fg='green'))
+    # Dry-run mode
+    if dry_run:
+        console.print(Panel(
+            "\n".join([f"• {extract_book_name(link)}" for link in download_links[:10]]) +
+            (f"\n... y {len(download_links) - 10} más" if len(download_links) > 10 else ""),
+            title="[yellow]MODO DRY-RUN - Vista previa[/yellow]",
+            border_style="yellow"
+        ))
+        return
 
-        # Agregar a Calibre (calibre.exe debe estar apagado)
-        if click.confirm('Quieres actualizar la base de datos Calibre?', default=True):
+    if not download_links:
+        console.print("[yellow]No hay libros para descargar.[/yellow]")
+        return
+
+    # Confirm download
+    confirm = inquirer.confirm(
+        message=f"¿Comenzar descarga de {len(download_links)} libros?",
+        default=True,
+    ).execute()
+
+    if not confirm:
+        console.print("[yellow]Descarga cancelada.[/yellow]")
+        return
+
+    # Download
+    results = download_with_progress(downloader, download_links, author=author)
+    show_results(author.title(), failed_links, results)
+
+    # Calibre integration
+    if calibre_library:
+        add_to_calibre = inquirer.confirm(
+            message="¿Actualizar base de datos Calibre?",
+            default=True,
+        ).execute()
+
+        if add_to_calibre:
             author_folder = os.path.join(download_folder, author)
             add_folder_to_calibre(author_folder, calibre_library)
 
+
+def search_by_genre(downloader: Downloader, dry_run: bool, download_folder: str):
+    """Handle genre search mode."""
+    with console.status("[cyan]Obteniendo géneros disponibles...[/cyan]", spinner="dots"):
+        genres = downloader.get_available_genres()
+
+    genre_list = list(genres.items())
+
+    # Interactive genre selection
+    genre_choices = [{"name": name, "value": (name, slug)} for name, slug in genre_list]
+
+    selected_genre_name, selected_genre_slug = inquirer.fuzzy(
+        message="Seleccionar género (escribe para filtrar)",
+        choices=genre_choices,
+        max_height="70%",
+    ).execute()
+
+    console.print(f"\n[green]✓[/green] Género seleccionado: [cyan bold]{selected_genre_name}[/cyan bold]")
+
+    # Get books from genre
+    with console.status(f"[cyan]Buscando libros en {selected_genre_name}...[/cyan]", spinner="dots"):
+        genre_url = downloader.get_genre_url(selected_genre_slug)
+        book_urls = downloader.get_urls_from_genre_url(genre_url)
+
+    console.print(f"[green]✓[/green] URL del género: [dim]{genre_url}[/dim]")
+
+    # Interactive book selection
+    selected_urls = select_books_interactive(book_urls, selected_genre_name)
+    if not selected_urls:
+        select_all = inquirer.confirm(
+            message="No seleccionaste ningún libro. ¿Descargar todos?",
+            default=False,
+        ).execute()
+        if select_all:
+            selected_urls = book_urls
+        else:
+            console.print("[yellow]Operación cancelada.[/yellow]")
+            return
+
+    # Get download links
+    with console.status("[cyan]Obteniendo links de descarga...[/cyan]", spinner="dots"):
+        download_links, failed_links = downloader.get_batch_download_links(selected_urls)
+
+    console.print(f"\n[cyan]📥 {len(download_links)} libros listos para descargar[/cyan]")
+    if failed_links:
+        console.print(f"[yellow]⚠️  {len(failed_links)} no pudieron obtener link[/yellow]")
+
+    # Dry-run mode
+    if dry_run:
+        console.print(Panel(
+            "\n".join([f"• {extract_book_name(link)}" for link in download_links[:10]]) +
+            (f"\n... y {len(download_links) - 10} más" if len(download_links) > 10 else ""),
+            title="[yellow]MODO DRY-RUN - Vista previa[/yellow]",
+            border_style="yellow",
+        ))
+        return
+
+    if not download_links:
+        console.print("[yellow]No hay libros para descargar.[/yellow]")
+        return
+
+    # Confirm download
+    confirm = inquirer.confirm(
+        message=f"¿Comenzar descarga de {len(download_links)} libros?",
+        default=True,
+    ).execute()
+
+    if not confirm:
+        console.print("[yellow]Descarga cancelada.[/yellow]")
+        return
+
+    # Download
+    results = download_with_progress(downloader, download_links, folder_name=selected_genre_name)
+    show_results(selected_genre_name, failed_links, results)
+
+
+def search_in_catalog(downloader: Downloader, dry_run: bool, download_folder: str):
+    """Search for books in the local catalog index."""
+    searcher = BookSearcher()
+
+    # Check if index exists
+    if not searcher.is_available():
+        console.print("\n[yellow]⚠️  El índice del catálogo no está disponible.[/yellow]")
+        create_now = inquirer.confirm(
+            message="¿Deseas crear el índice ahora? (puede tomar varios minutos)",
+            default=True,
+        ).execute()
+
+        if create_now:
+            do_rebuild_index()
+            searcher = BookSearcher()  # Reload
+        else:
+            return
+
+    # Show index info
+    info = searcher.get_index_info()
+    if info:
+        last_updated = info.get('last_updated', 'Desconocido')
+        if len(last_updated) > 19:
+            last_updated = last_updated[:19].replace('T', ' ')
+        console.print(Panel(
+            f"📚 [cyan]{info.get('total_books', 0)}[/cyan] libros indexados\n"
+            f"🕐 Actualizado: [dim]{last_updated}[/dim]",
+            title="[bold]Índice del Catálogo[/bold]",
+            border_style="blue",
+        ))
+
+    # Search loop
+    while True:
+        # Ask what to search by
+        search_type = inquirer.select(
+            message="¿Qué deseas buscar?",
+            choices=[
+                {"name": "📖 Buscar por título", "value": "title"},
+                {"name": "✍️  Buscar por autor", "value": "author"},
+                {"name": "🔍 Buscar en todo", "value": "all"},
+                {"name": "← Volver", "value": "exit"},
+            ],
+            default="all",
+        ).execute()
+
+        if search_type == "exit":
+            break
+
+        search_label = {
+            "title": "título",
+            "author": "autor", 
+            "all": "título o autor"
+        }[search_type]
+
+        query = inquirer.text(
+            message=f"Buscar {search_label}",
+            validate=lambda x: len(x) > 0,
+        ).execute()
+
+        results = searcher.search(query, search_by=search_type, limit=15)
+        display_search_results(results, query)
+
+        if results:
+            # Ask if user wants to download any
+            download_choice = inquirer.confirm(
+                message="¿Deseas descargar alguno de estos libros?",
+                default=False,
+            ).execute()
+
+            if download_choice:
+                # Let user select which books
+                choices = [
+                    {"name": f"{book['title']} - {book.get('author', '?')}", "value": book['url']}
+                    for book in results
+                ]
+
+                selected_urls = inquirer.checkbox(
+                    message="Seleccionar libros para descargar",
+                    choices=choices,
+                    cycle=True,
+                    instruction="(↑↓ navegar, espacio marcar, ctrl+a todos, enter confirmar)",
+                    keybindings={
+                        "toggle-all-true": [{"key": "c-a"}],
+                        "toggle-all-false": [{"key": "c-a"}],
+                    },
+                ).execute()
+
+                if selected_urls:
+                    # Get download links
+                    with console.status("[cyan]Obteniendo links de descarga...[/cyan]", spinner="dots"):
+                        download_links, failed_links = downloader.get_batch_download_links(selected_urls)
+
+                    if download_links and not dry_run:
+                        results_dl = download_with_progress(downloader, download_links, folder_name="Búsqueda")
+                        show_results("Búsqueda", failed_links, results_dl)
+                    elif dry_run:
+                        console.print(Panel(
+                            "\n".join([f"• {extract_book_name(link)}" for link in download_links]),
+                            title="[yellow]MODO DRY-RUN[/yellow]",
+                            border_style="yellow",
+                        ))
+
+                    break  # Exit search loop after download
+
+        # Loop continues automatically to search type selection
+
+
+def do_update_index():
+    """Update the catalog index incrementally (only new books)."""
+    max_pages = inquirer.number(
+        message="Total de páginas a revisar",
+        default=10,
+        min_allowed=1,
+        max_allowed=100,
+    ).execute()
+
+    try:
+        update_index(max_pages=int(max_pages))
     except Exception as e:
-        click.echo(click.style(f'Error: {str(e)}', fg='red'))
+        console.print(f"[red]Error al actualizar índice: {e}[/red]")
+
+
+def do_rebuild_index():
+    """Rebuild the catalog index from scratch."""
+    console.print("\n[bold yellow]⚠️  Esto eliminará el índice actual y lo reconstruirá desde cero.[/bold yellow]\n")
+
+    max_pages = inquirer.number(
+        message="Páginas a indexar (0 = todas)",
+        default=0,
+        min_allowed=0,
+        max_allowed=500,
+    ).execute()
+    
+    max_pages = int(max_pages) if int(max_pages) > 0 else None
+
+    if max_pages is None:
+        confirm = inquirer.confirm(
+            message="¿Indexar TODAS las páginas? Esto puede tomar mucho tiempo",
+            default=False,
+        ).execute()
+        
+        if not confirm:
+            console.print("[dim]Operación cancelada.[/dim]")
+            return
+
+    try:
+        rebuild_index(max_pages=max_pages)
+    except Exception as e:
+        console.print(f"[red]Error al construir índice: {e}[/red]")
+
+
+def main():
+    """Main CLI entry point."""
+    console.clear()
+    show_banner()
+
+    try:
+        # Configuration
+        download_folder = inquirer.filepath(
+            message="Carpeta de descarga",
+            default=settings.DEFAULT_DOWNLOAD_FOLDER,
+            only_directories=True,
+        ).execute()
+
+        calibre_library = inquirer.filepath(
+            message="Librería Calibre (Enter para omitir)",
+            default=settings.DEFAULT_CALIBRE_LIBRARY or "",
+            only_directories=True,
+        ).execute()
+
+        show_config_panel(download_folder, calibre_library)
+
+        # Dry-run option
+        dry_run = inquirer.confirm(
+            message="¿Modo dry-run? (solo vista previa, default N)",
+            default=False,
+        ).execute()
+
+        # Check if index exists for display
+        index_info = get_index_info()
+        if index_info:
+            index_status = f" ({index_info['total_books']} libros)"
+        else:
+            index_status = " (no disponible)"
+
+        # Search mode selection
+        search_mode = inquirer.select(
+            message="¿Qué deseas hacer?",
+            choices=[
+                {"name": "📝 Buscar por Autor", "value": "autor"},
+                {"name": "📚 Buscar por Género", "value": "genero"},
+                Separator(),
+                {"name": f"🔍 Buscar en Catálogo{index_status}", "value": "search"},
+                {"name": "🔄 Actualizar Índice (solo nuevos)", "value": "update"},
+                {"name": "🔁 Reconstruir Índice (desde cero)", "value": "rebuild"},
+                Separator(),
+                {"name": "❌ Salir", "value": "exit"},
+            ],
+            default="autor",
+        ).execute()
+
+        if search_mode == "exit":
+            console.print("[dim]¡Hasta luego! 👋[/dim]")
+            return
+
+        if search_mode == "update":
+            do_update_index()
+            return
+
+        if search_mode == "rebuild":
+            do_rebuild_index()
+            return
+
+        # Initialize downloader for other modes
+        downloader = Downloader(proxy=None, download_folder=download_folder, calibre_library=calibre_library)
+
+        if search_mode == "autor":
+            search_by_author(downloader, dry_run, download_folder, calibre_library)
+        elif search_mode == "genero":
+            search_by_genre(downloader, dry_run, download_folder)
+        elif search_mode == "search":
+            search_in_catalog(downloader, dry_run, download_folder)
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Operación cancelada por el usuario.[/yellow]")
+    except Exception as e:
+        console.print(f"\n[red bold]Error:[/red bold] {str(e)}")
 
 
 if __name__ == '__main__':

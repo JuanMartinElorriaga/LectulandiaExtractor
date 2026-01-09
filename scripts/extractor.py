@@ -2,45 +2,62 @@ from loguru import logger
 import os
 import re
 from rapidfuzz import fuzz
-import requests
 import sys
 import time
-import werkzeug
-werkzeug.cached_property = werkzeug.utils.cached_property
-from robobrowser import RoboBrowser
+from pathlib import Path
 from unidecode import unidecode
+
+# New imports - httpx + BeautifulSoup
+import httpx
+from src.infrastructure.http.http_client import HTTPClient
+from src.utils.validators import validate_epub, sanitize_path
+from src.utils.delays import smart_delay
+from config.settings import settings
 
 # Set logger to log into an external file as well as stream in the console
 logger.remove()
-logger.add(sys.stdout, level="INFO", format="{time} - {level} - {message}")
-logger.add("Downloader_log.txt", level="INFO", format="{time} - {level} - {message}", rotation="10 MB", compression="zip")
+logger.add(
+    sys.stdout,
+    level="INFO",
+    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>"
+)
+logger.add(
+    "logs/downloader_{time:YYYY-MM-DD}.log",
+    level="DEBUG",
+    format="{time} - {level} - {name}:{function}:{line} - {message}",
+    rotation="00:00",  # New file at midnight
+    retention="30 days",
+    compression="zip"
+)
 
-# Paso 1: Verificar si autor ya existe (fuzzy match en Calibre)
-# Paso 2: Si no existe, crear nueva carpeta en download_folder
-# Paso 3: Si existe, usar nombre existente y listar subcarpetas (libros)
-# Paso 4: Para cada libro nuevo, verificar si ya fue descargado (fuzzy contra subcarpetas)
-# Paso 5: Si no está, crear carpeta del libro, descargar y guardar
 
 def clean_folder_name(name):
     """ Funcion helper para remover sufijo a las subcarpetas indexadas por Calibre """
     return re.sub(r'\s\(\d+\)$', '', name.strip())
 
+
 class Downloader():
-    def __init__(self, proxy:str, download_folder:str, calibre_library:str):
+    def __init__(self, proxy: str, download_folder: str, calibre_library: str):
         self.download_folder = download_folder
         self.calibre_library = calibre_library
-        session = requests.Session()
-        if proxy:
-            session.proxies = {'http': proxy, 'https': proxy}
-        self.browser = RoboBrowser(history=True, parser='html.parser', session=session)
-
+        self.http_client = HTTPClient(proxy=proxy)
 
     def _get_existing_author_folder(self, author_name_cleaned: str) -> tuple[str, list[str]]:
         """Busca coincidencia fuzzy en Calibre; si hay match, devuelve también subcarpetas"""
-        threshold       = 90
+        threshold = settings.AUTHOR_MATCH_THRESHOLD
         best_match_name = None
-        best_score      = 0
-        subfolders      = []
+        best_score = 0
+        subfolders = []
+
+        # Skip Calibre lookup if library path is empty or doesn't exist
+        if not self.calibre_library or not os.path.isdir(self.calibre_library):
+            logger.warning(f'Calibre library no configurada o no existe: "{self.calibre_library}"')
+            normalized_capitalized = ' '.join(word.capitalize() for word in author_name_cleaned.split())
+            final_path = os.path.join(self.download_folder, normalized_capitalized)
+            if not os.path.exists(final_path):
+                os.makedirs(final_path)
+                logger.info(f'Carpeta creada: {final_path}')
+            return final_path, []
 
         for calibre_folder in os.listdir(self.calibre_library):
             calibre_path = os.path.join(self.calibre_library, calibre_folder)
@@ -74,132 +91,263 @@ class Downloader():
 
         return final_path, subfolders
 
+    def _get_genre_folder(self, genre_name: str) -> tuple[str, list[str]]:
+        """
+        Create and return the genre folder path.
 
-    def get_author_url(self, author:str) -> str:
-        ''' Get author url from author name and url '''
+        Args:
+            genre_name: Display name of the genre (e.g., "Arquitectura")
+
+        Returns:
+            tuple: (folder_path, existing_books_list)
+        """
+        # Capitalize genre name for folder
+        folder_name = ' '.join(word.capitalize() for word in genre_name.split())
+        final_path = os.path.join(self.download_folder, folder_name)
+
+        existing_books = []
+
+        # Create folder if it doesn't exist
+        if not os.path.exists(final_path):
+            os.makedirs(final_path)
+            logger.info(f'Carpeta de género creada: {final_path}')
+        else:
+            logger.info(f'Carpeta de género ya existente: {final_path}')
+            # Get existing book folders for duplicate detection
+            existing_books = [f for f in os.listdir(final_path) if os.path.isdir(os.path.join(final_path, f))]
+
+        return final_path, existing_books
+
+    def get_author_url(self, author: str) -> str:
+        ''' Get author url from author name '''
         # Input validation
         if not author or not isinstance(author, str):
             raise ValueError("El autor debe ser un string no nulo")
 
         # Check if base url is active
-        base_url = 'https://ww3.lectulandia.com/'
-        response = requests.head(base_url)
-        if response.status_code != 200:
-            raise requests.ConnectionError(f"La URL: {base_url} no se encuentra activa. Por favor, setear una diferente.")
+        base_url = settings.LECTULANDIA_BASE_URL
+        try:
+            response = httpx.head(base_url, timeout=10.0)
+            response.raise_for_status()
+        except httpx.HTTPError as e:
+            raise httpx.ConnectError(f"La URL: {base_url} no se encuentra activa. Error: {e}")
 
         # Create author url
         author_name = author.replace(" ", "-").lower()
-        author_url  = f'{base_url}autor/{author_name}'
+        author_url = f'{base_url}/autor/{author_name}'
         return author_url
 
-
-    def get_books_titles_from_author_url(self, author_url:str) -> list:
-        ''' Get book titles for a given author url '''
-        self.browser.open(author_url)
-        books_titles_from_author = [
-            f"{book['title']}"
-            for book in self.browser.find_all("a", class_="title")]
-        logger.info(f'Cantidad de libros obtenidos: {len(books_titles_from_author)}')
-        return books_titles_from_author
-
-
-    def get_urls_from_author_url(self, author_url:str, urls_from_author:list=None) -> list:
-        ''' Get list of book links for a given author'''
+    def get_urls_from_author_url(self, author_url: str, urls_from_author: list = None, depth: int = 0) -> list:
+        """Get list of book links for a given author with pagination support."""
         if not urls_from_author:
             urls_from_author = []
-        self.browser.open(author_url)
+
+        # Prevent infinite recursion
+        if depth >= settings.MAX_PAGINATION_DEPTH:
+            logger.warning(f"Alcanzado límite de paginación: {settings.MAX_PAGINATION_DEPTH} páginas")
+            return urls_from_author
+
+        # Use httpx + BeautifulSoup instead of RoboBrowser
+        soup = self.http_client.get_soup(author_url)
+
         new_urls = [
-            f"https://ww3.lectulandia.com{book['href']}"
-            for book in self.browser.find_all("a", class_="card-click-target")]
+            f"{settings.LECTULANDIA_BASE_URL}{book['href']}"
+            for book in soup.find_all("a", class_="card-click-target")
+        ]
         urls_from_author.extend(new_urls)
-        next_page_link = self.browser.find("a", class_="next page-numbers")
+
+        # Check for next page
+        next_page_link = soup.find("a", class_="next page-numbers")
         if next_page_link:
-            next_page_url = f"https://ww3.lectulandia.com{next_page_link['href']}"
-            # Recursive call as long as there is a "Siguiente" button
-            self.get_urls_from_author_url(next_page_url, urls_from_author)
+            smart_delay(1.0, 3.0)  # Smart delay between pages
+            next_page_url = f"{settings.LECTULANDIA_BASE_URL}{next_page_link['href']}"
+            # Recursive call with depth tracking
+            self.get_urls_from_author_url(next_page_url, urls_from_author, depth + 1)
 
         if not urls_from_author:
             raise Exception("No hay URLs para este autor! Intentar un autor distinto.")
+
         return urls_from_author
 
+    def get_available_genres(self) -> dict[str, str]:
+        """
+        Fetch available genres from the website.
+        
+        Returns:
+            dict: {display_name: slug} (e.g., {"Arquitectura": "arquitectura"})
+        """
+        # Genres are listed on the main page
+        genres_url = settings.LECTULANDIA_BASE_URL
+        logger.info(f"Obteniendo géneros desde: {genres_url}")
 
-    def get_download_link(self, book_url:str):
-        ''' Turn book link into a download url '''
-        self.browser.open(book_url)
-        for link in self.browser.find_all("a"):
+        soup = self.http_client.get_soup(genres_url)
+        genres = {}
+
+        # Find all genre links in the page
+        for link in soup.find_all("a", href=True):
+            href = link.get("href", "")
+            if "/genero/" in href:
+                # Extract slug from URL like "/genero/arquitectura/"
+                slug = href.strip("/").split("/")[-1]
+                display_name = link.get_text(strip=True)
+                if display_name and slug:
+                    genres[display_name] = slug
+
+        if not genres:
+            raise Exception("No se pudieron obtener los géneros desde el sitio.")
+
+        logger.info(f"Se encontraron {len(genres)} géneros")
+        return genres
+
+    def get_genre_url(self, genre_slug: str) -> str:
+        """
+        Get genre URL from genre slug.
+
+        Args:
+            genre_slug: The genre slug (e.g., "arquitectura")
+
+        Returns:
+            Full genre URL
+        """
+        if not genre_slug or not isinstance(genre_slug, str):
+            raise ValueError("El género debe ser un string no nulo")
+
+        base_url = settings.LECTULANDIA_BASE_URL
+        genre_url = f'{base_url}/genero/{genre_slug}'
+        return genre_url
+
+    def get_urls_from_genre_url(self, genre_url: str, urls_from_genre: list = None, depth: int = 0) -> list:
+        """
+        Get list of book links for a given genre with pagination support.
+
+        Args:
+            genre_url: URL of the genre page
+            urls_from_genre: Accumulated URLs (for recursion)
+            depth: Current pagination depth
+
+        Returns:
+            List of book URLs
+        """
+        if not urls_from_genre:
+            urls_from_genre = []
+
+        # Prevent infinite recursion
+        if depth >= settings.MAX_PAGINATION_DEPTH:
+            logger.warning(f"Alcanzado límite de paginación: {settings.MAX_PAGINATION_DEPTH} páginas")
+            return urls_from_genre
+
+        soup = self.http_client.get_soup(genre_url)
+
+        new_urls = [
+            f"{settings.LECTULANDIA_BASE_URL}{book['href']}"
+            for book in soup.find_all("a", class_="card-click-target")
+        ]
+        urls_from_genre.extend(new_urls)
+
+        # Check for next page
+        next_page_link = soup.find("a", class_="next page-numbers")
+        if next_page_link:
+            smart_delay(1.0, 3.0)  # Smart delay between pages
+            next_page_url = f"{settings.LECTULANDIA_BASE_URL}{next_page_link['href']}"
+            # Recursive call with depth tracking
+            self.get_urls_from_genre_url(next_page_url, urls_from_genre, depth + 1)
+
+        if not urls_from_genre:
+            raise Exception("No hay URLs para este género! Intentar un género distinto.")
+
+        return urls_from_genre
+
+    def get_download_link(self, book_url: str):
+        """Turn book link into a download url."""
+        soup = self.http_client.get_soup(book_url)
+
+        for link in soup.find_all("a"):
             if "download.php?t=1" in str(link):
+                # Note: download.php is on www, not ww3
                 return f"https://www.lectulandia.com{link['href']}"
 
+        return None
 
-    def get_batch_download_links(self, urls_from_author:list):
-        ''' Get whole list of links to download from a given author '''
-        download_links = [self.get_download_link(book_url) for book_url in urls_from_author]
-        return download_links
+    def get_batch_download_links(self, urls_from_author: list) -> tuple[list, list]:
+        """
+        Get whole list of links to download from a given author.
 
-
-    def download_cover_google_books(self, title: str, author: str, file_path: str) -> None:
-            """ Descarga portada usando Google Books API según título y autor """
+        Returns:
+            tuple: (download_links, failed_urls) - successful links and URLs that failed
+        """
+        download_links = []
+        failed_urls = []
+        for book_url in urls_from_author:
             try:
-                query = f'intitle:"{title}"+inauthor:"{author}"'
-                url = f'https://www.googleapis.com/books/v1/volumes?q={query}'
-
-                logger.info(f"Consultando Google Books API con: {query}")
-                response = requests.get(url)
-                response.raise_for_status()
-                data = response.json()
-
-                if 'items' not in data or len(data['items']) == 0:
-                    logger.warning(f"No se encontraron resultados para '{title}' de '{author}'")
-                    return
-
-                volume_info = data['items'][0].get('volumeInfo', {})
-                image_links = volume_info.get('imageLinks', {})
-                cover_url = image_links.get('thumbnail') or image_links.get('smallThumbnail')
-
-                if not cover_url:
-                    logger.warning("No se encontró la imagen de portada en los resultados de la API.")
-                    return
-
-                if cover_url.startswith("http://"):
-                    cover_url = cover_url.replace("http://", "https://")
-
-                logger.info(f"Descargando portada desde: {cover_url}")
-                img_response = requests.get(cover_url)
-                img_response.raise_for_status()
-
-                cover_path = os.path.join(os.path.dirname(file_path), "cover.jpg")
-                with open(cover_path, "wb") as f:
-                    f.write(img_response.content)
-
-                logger.info(f"Portada guardada en: {cover_path}")
-
-            except requests.RequestException as e:
-                logger.warning(f"Error en la petición HTTP: {e}")
+                link = self.get_download_link(book_url)
+                if link:
+                    download_links.append(link)
             except Exception as e:
-                logger.warning(f"Error al descargar portada: {e}")
+                logger.error(f"Error obteniendo link de descarga para {book_url}: {e}")
+                failed_urls.append({'url': book_url, 'error': str(e)})
+                continue
+        return download_links, failed_urls
 
+    def download_book(self, download_url: str, author: str = None, timeout: int = None, folder_name: str = None) -> None:
+        """
+        Download a single book with validation.
 
-    def download_book(self, download_url: str, author: str, timeout: int = 180) -> None:
-        author_name_cleaned = unidecode(author).strip().lower()
-        author_folder, existing_books = self._get_existing_author_folder(author_name_cleaned)
+        Args:
+            download_url: URL to download from
+            author: Author name (used for folder organization in author mode)
+            timeout: Download timeout in seconds
+            folder_name: Optional folder name override (used for genre mode)
+        """
+        if timeout is None:
+            timeout = settings.DOWNLOAD_TIMEOUT
+
+        # Determine target folder based on mode
+        if folder_name:
+            # Genre mode: use provided folder name
+            target_folder, existing_books = self._get_genre_folder(folder_name)
+        elif author:
+            # Author mode: use author folder with Calibre lookup
+            author_name_cleaned = unidecode(author).strip().lower()
+            target_folder, existing_books = self._get_existing_author_folder(author_name_cleaned)
+        else:
+            raise ValueError("Debe especificar author o folder_name")
 
         try:
             logger.info(f'Descargando desde: {download_url}')
-            self.browser.open(download_url)
-            pattern = re.compile("var linkCode = \"(.*?)\";")
-            section = pattern.findall(str(self.browser.parsed))
-            ant_url = f'https://www.antupload.com/file/{section[0]}'
+
+            # Get linkCode from download page
+            soup = self.http_client.get_soup(download_url)
+            pattern = re.compile(r'var linkCode = "(.*?)";')
+            match = pattern.search(str(soup))
+
+            if not match:
+                raise ValueError("No se pudo extraer linkCode de download.php")
+
+            link_code = match.group(1)
+            ant_url = f'{settings.ANTUPLOAD_BASE_URL}/file/{link_code}'
             logger.info(f'antupload: {ant_url}')
-            self.browser.open(ant_url)
 
-            raw_filename = self.browser.find("div", id="fileDescription").find_all("p")[1].text.replace("Name: ", "")
-            size = self.browser.find("div", id="fileDescription").find_all("p")[2].text
+            # Get file info from antupload
+            ant_soup = self.http_client.get_soup(ant_url)
+            file_desc = ant_soup.find("div", id="fileDescription")
 
-            book_name = os.path.splitext(raw_filename)[0].split(" - ")[0].strip()
+            if not file_desc:
+                raise ValueError("No se encontró información del archivo en antupload")
+
+            paragraphs = file_desc.find_all("p")
+            raw_filename = paragraphs[1].text.replace("Name: ", "")
+            size = paragraphs[2].text
+
+            # Extract book name and author from filename (format: "BookName - Author.epub")
+            name_without_ext = os.path.splitext(raw_filename)[0]
+            parts = name_without_ext.split(" - ")
+            book_name = parts[0].strip()
+            # Extract author from filename if available (for genre mode folder structure)
+            file_author = parts[1].strip() if len(parts) > 1 else "Autor Desconocido"
             filename = f"{book_name}.epub"
 
-            # Verificación fuzzy contra subcarpetas existentes
-            threshold = 90
+            # Fuzzy match verification against existing books
+            threshold = settings.BOOK_MATCH_THRESHOLD
             book_name_cleaned = unidecode(book_name).strip().lower()
             for existing in existing_books:
                 existing_cleaned = unidecode(existing).strip().lower()
@@ -208,63 +356,119 @@ class Downloader():
                     logger.info(f'Se detectó un libro similar ya existente: "{existing}" (score: {score}%). Se omite la descarga.')
                     return None
 
-            book_folder = os.path.join(author_folder, book_name)
-            if os.path.exists(book_folder):
+            # Build folder path based on mode
+            if folder_name:
+                # Genre mode: Genre/Author/BookName/
+                book_folder = sanitize_path(Path(target_folder), file_author, book_name)
+            else:
+                # Author mode: Author/BookName/
+                book_folder = sanitize_path(Path(target_folder), book_name)
+
+            if book_folder.exists():
                 logger.info(f'El libro ya existe en la carpeta destino: {book_folder}. Se omite la descarga.')
                 return None
             else:
-                os.makedirs(book_folder, exist_ok=True)
+                book_folder.mkdir(parents=True, exist_ok=True)
 
-            file_path = os.path.join(book_folder, filename)
-            file_url = self.browser.find("a", id="downloadB")
+            file_path = book_folder / filename
+
+            # Find download button
+            download_button = ant_soup.find("a", id="downloadB")
+            if not download_button or not download_button.get('href'):
+                raise ValueError("No se encontró botón de descarga en antupload")
+
+            file_url = download_button['href']
+
+            # Ensure URL is absolute
+            if file_url.startswith('/'):
+                file_url = f"{settings.ANTUPLOAD_BASE_URL}{file_url}"
+
             logger.info(f"Nombre de archivo: {filename}")
             logger.info(f"Tamaño de archivo: {size}")
+            logger.info(f"URL de descarga: {file_url}")
 
-            if file_url:
-                time.sleep(1)
-                self.browser.follow_link(file_url, timeout=timeout)
-                with open(file_path, "wb") as epub_file:
-                    epub_file.write(self.browser.response.content)
-                    logger.info(f'El archivo ha sido descargado en: {epub_file.name}')
-                    self.download_cover_google_books(title=book_name, author=author, file_path=file_path)
-                    return filename, size
-            else:
-                logger.error(f'Error descargando libro: no ha sido posible encontrar el link de descarga')
-                return None
-        except requests.exceptions.Timeout:
+            # Download binary content
+            smart_delay(1.0, 2.0)  # Small delay before download
+            binary_content = self.http_client.download_binary(
+                file_url,
+                timeout=timeout,
+                referer=ant_url  # Add Referer header for anti-bot protection
+            )
+
+            # Save EPUB file
+            with open(file_path, "wb") as epub_file:
+                epub_file.write(binary_content)
+                logger.info(f'El archivo ha sido descargado en: {epub_file.name}')
+
+            # Validate EPUB
+            if not validate_epub(file_path):
+                logger.error(f"EPUB inválido o corrupto: {file_path}")
+                os.remove(file_path)
+                raise ValueError(f"El archivo descargado no es un EPUB válido")
+
+            return filename, size
+
+        except httpx.TimeoutException:
             logger.error(f'Timeout error durante la descarga. URL: {download_url}')
             return None
         except Exception as e:
             logger.error(f'Error descargando libro: {str(e)}')
             return None
 
+    def batch_download_books(self, download_urls: list, author: str = None, folder_name: str = None) -> dict:
+        """
+        Download all books from a list with result tracking.
 
+        Args:
+            download_urls: List of download URLs
+            author: Author name (for author mode)
+            folder_name: Folder name override (for genre mode)
 
-    def batch_download_books(self, urls_from_author:list, author:str):
-        ''' Download all book collection from a given author'''
-        for url in urls_from_author:
-            self.download_book(url, author)
-            time.sleep(2)
+        Returns:
+            dict with keys: 'exitosos', 'fallidos', 'omitidos'
+        """
+        results = {
+            'exitosos': [],
+            'fallidos': [],
+            'omitidos': []
+        }
 
+        total = len(download_urls)
+        display_name = folder_name if folder_name else (author.title() if author else "Desconocido")
 
-    def get_book_page_list(self, page:int) -> list:
-        ''' Get list of book titles for a given page number '''
-        page_url = f'https://ww3.lectulandia.com/book/page/{page}/'
-        self.browser.open(page_url)
-        logger.info(f'Obteniendo lista de libros desde {page_url}')
-        book_page_list = [
-            f"https://ww3.lectulandia.com{book['href']}"
-            for book in self.browser.find_all("a", class_="card-click-target")]
-        return book_page_list
+        for i, url in enumerate(download_urls, 1):
+            logger.info(f"Procesando libro {i}/{total}")
 
+            try:
+                result = self.download_book(url, author=author, folder_name=folder_name)
 
-    def download_full_page(self, page:int):
-        ''' Download a full page '''
-        logger.info(f"Descargando página: {page} ")
-        try:
-            books = self.get_book_page_list(page)
-            for book in books:
-                time.sleep(1)
-                download_url = self.get_download_link(book)
-        except Exception as e:
-            logger.error(f'Error descargando página completa: {str(e)}')
+                if result is None:
+                    results['omitidos'].append(url)
+                    logger.info(f"Libro omitido (ya existe o duplicado)")
+                else:
+                    results['exitosos'].append({'url': url, 'filename': result[0], 'size': result[1]})
+                    logger.info(f"✓ Descargado: {result[0]}")
+
+            except Exception as e:
+                results['fallidos'].append({'url': url, 'error': str(e)})
+                logger.error(f"✗ Error en {url}: {str(e)}")
+                # Continue with next book without interrupting batch
+
+            # Smart delay between downloads
+            if i < total:  # Don't delay after last book
+                smart_delay()  # Uses configured defaults
+
+        # Final summary
+        logger.info(f"\n{'='*50}")
+        logger.info(f"RESUMEN DE DESCARGA - {display_name}")
+        logger.info(f"Exitosos: {len(results['exitosos'])}")
+        logger.info(f"Omitidos: {len(results['omitidos'])} (ya existían)")
+        logger.info(f"Fallidos: {len(results['fallidos'])}")
+        logger.info(f"{'='*50}\n")
+
+        return results
+
+    def __del__(self):
+        """Cleanup: close HTTP client when Downloader is destroyed."""
+        if hasattr(self, 'http_client'):
+            self.http_client.close()
