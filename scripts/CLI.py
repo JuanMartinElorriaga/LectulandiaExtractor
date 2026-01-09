@@ -95,9 +95,16 @@ def show_books_table(book_urls: list, title: str):
     console.print()
 
 
-def download_with_progress(downloader: Downloader, download_links: list, author: str = None, folder_name: str = None) -> dict:
+def download_with_progress(downloader: Downloader, download_links: list, author: str = None, folder_name: str = None, direct_mode: bool = False) -> dict:
     """Download books with a nice progress display."""
-    display_name = folder_name if folder_name else author.title()
+    if direct_mode:
+        display_name = "Catálogo"
+    elif folder_name:
+        display_name = folder_name
+    elif author:
+        display_name = author.title()
+    else:
+        display_name = "Descarga"
 
     with Progress(
         SpinnerColumn(),
@@ -121,7 +128,7 @@ def download_with_progress(downloader: Downloader, download_links: list, author:
 
         for url in download_links:
             try:
-                result = downloader.download_book(url, author=author, folder_name=folder_name)
+                result = downloader.download_book(url, author=author, folder_name=folder_name, direct_mode=direct_mode)
 
                 if result is None:
                     results['omitidos'].append(url)
@@ -242,7 +249,7 @@ def search_by_author(downloader: Downloader, dry_run: bool, download_folder: str
             add_folder_to_calibre(author_folder, calibre_library)
 
 
-def search_by_genre(downloader: Downloader, dry_run: bool, download_folder: str):
+def search_by_genre(downloader: Downloader, dry_run: bool, download_folder: str, calibre_library: str = None):
     """Handle genre search mode."""
     with console.status("[cyan]Obteniendo géneros disponibles...[/cyan]", spinner="dots"):
         genres = downloader.get_available_genres()
@@ -316,8 +323,20 @@ def search_by_genre(downloader: Downloader, dry_run: bool, download_folder: str)
     results = download_with_progress(downloader, download_links, folder_name=selected_genre_name)
     show_results(selected_genre_name, failed_links, results)
 
+    # Calibre sync - sync the genre folder (contains Author/Book structure)
+    if calibre_library and results:
+        genre_folder = os.path.join(download_folder, selected_genre_name)
+        if os.path.exists(genre_folder):
+            add_to_calibre = inquirer.confirm(
+                message="¿Agregar a Calibre?",
+                default=True,
+            ).execute()
 
-def search_in_catalog(downloader: Downloader, dry_run: bool, download_folder: str):
+            if add_to_calibre:
+                add_folder_to_calibre(genre_folder, calibre_library)
+
+
+def search_in_catalog(downloader: Downloader, dry_run: bool, download_folder: str, calibre_library: str = None):
     """Search for books in the local catalog index."""
     searcher = BookSearcher()
 
@@ -367,7 +386,7 @@ def search_in_catalog(downloader: Downloader, dry_run: bool, download_folder: st
 
         search_label = {
             "title": "título",
-            "author": "autor", 
+            "author": "autor",
             "all": "título o autor"
         }[search_type]
 
@@ -410,8 +429,18 @@ def search_in_catalog(downloader: Downloader, dry_run: bool, download_folder: st
                         download_links, failed_links = downloader.get_batch_download_links(selected_urls)
 
                     if download_links and not dry_run:
-                        results_dl = download_with_progress(downloader, download_links, folder_name="Búsqueda")
-                        show_results("Búsqueda", failed_links, results_dl)
+                        # Direct mode: Author/Book structure directly in download_folder
+                        results_dl = download_with_progress(downloader, download_links, direct_mode=True)
+                        show_results("Catálogo", failed_links, results_dl)
+                        
+                        # Calibre sync - sync entire download folder
+                        if calibre_library and results_dl.get('exitosos'):
+                            add_to_calibre_choice = inquirer.confirm(
+                                message="¿Agregar a Calibre?",
+                                default=True,
+                            ).execute()
+                            if add_to_calibre_choice:
+                                add_folder_to_calibre(download_folder, calibre_library)
                     elif dry_run:
                         console.print(Panel(
                             "\n".join([f"• {extract_book_name(link)}" for link in download_links]),
@@ -449,7 +478,7 @@ def do_rebuild_index():
         min_allowed=0,
         max_allowed=500,
     ).execute()
-    
+
     max_pages = int(max_pages) if int(max_pages) > 0 else None
 
     if max_pages is None:
@@ -457,7 +486,7 @@ def do_rebuild_index():
             message="¿Indexar TODAS las páginas? Esto puede tomar mucho tiempo",
             default=False,
         ).execute()
-        
+
         if not confirm:
             console.print("[dim]Operación cancelada.[/dim]")
             return
@@ -536,9 +565,9 @@ def main():
         if search_mode == "autor":
             search_by_author(downloader, dry_run, download_folder, calibre_library)
         elif search_mode == "genero":
-            search_by_genre(downloader, dry_run, download_folder)
+            search_by_genre(downloader, dry_run, download_folder, calibre_library)
         elif search_mode == "search":
-            search_in_catalog(downloader, dry_run, download_folder)
+            search_in_catalog(downloader, dry_run, download_folder, calibre_library)
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Operación cancelada por el usuario.[/yellow]")
