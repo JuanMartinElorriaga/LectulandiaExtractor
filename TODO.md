@@ -1,2 +1,0 @@
-- Integración con base de datos (SQLite)
-- Unit testing para todas las features
