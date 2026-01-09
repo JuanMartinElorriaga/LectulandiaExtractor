@@ -18,22 +18,22 @@ El programa permite buscar por autor, género o en un catálogo local indexado, 
 - **Búsqueda por autor** - Encuentra todos los libros de un autor
 - **Búsqueda por género** - Navega libros por categoría
 - **Catálogo local indexado** - Búsqueda rápida offline por título o autor
-- **Selección interactiva** - Checkboxes con Ctrl+A para seleccionar todos
+- **Selección interactiva** - Checkboxes con accesos de teclado para interacción dinámica
 
 ### 🔧 Robustez
-- **Retry automático** - Reintentos con backoff exponencial (502, 503, 504, 429)
+- **Retry automático** - Reintentos con backoff exponencial
 - **Validación de EPUB** - Verifica integridad de archivos descargados
 - **Anti-duplicados** - Fuzzy matching para evitar descargas repetidas
-- **Rate limiting** - Delays aleatorios para evitar bloqueos
+- **Rate limiting** - Delays aleatorios y header rotation para evitar bloqueos
 
 ### 🎨 Interfaz
-- **CLI interactiva** - Menús con InquirerPy
-- **Progress bars** - Visualización con Rich
+- **CLI interactiva** - Menús con `InquirerPy`
+- **Progress bars** - Visualización con `Rich`
 - **Modo dry-run** - Vista previa sin descargar
 
 ### 🔗 Integración
-- **Calibre** - Sincronización automática con tu biblioteca
-- **Configuración .env** - Personalizable
+- **Calibre** - Sincronización automática con tu biblioteca (opcional)
+- **Configuración .env** - Parámetros personalizable
 
 ---
 
@@ -81,10 +81,10 @@ DEFAULT_DOWNLOAD_FOLDER=/Users/tu_usuario/Downloads/Libros
 DEFAULT_CALIBRE_LIBRARY=/Users/tu_usuario/CalibreLibrary
 ```
 
-### 4. ¡Ejecutar!
+### 4. Ejecutar!
 
 ```bash
-cd scripts && python CLI.py
+sh run.sh
 ```
 
 ---
@@ -255,8 +255,8 @@ REQUEST_TIMEOUT=30
 ### "No module named 'src'"
 
 ```bash
-# Ejecuta desde la carpeta scripts/
-cd scripts && python CLI.py
+# Ejecuta desde el bash script la carpeta scripts, no desde python directamente
+sh bash.sh
 ```
 
 ### "calibredb: command not found"
@@ -276,24 +276,6 @@ REQUEST_DELAY_MAX=7.0
 
 ---
 
-## 🚧 Limitaciones
-
-- Solo formato EPUB
-- Requiere Calibre Desktop cerrado para sincronizar
-- Dependiente de la estructura HTML de Lectulandia
-
----
-
-## 🗺️ Roadmap
-
-- [ ] Tests unitarios con pytest
-- [ ] Exportación a CSV/JSON
-- [ ] Soporte múltiples formatos (MOBI, PDF)
-- [ ] GUI web con FastAPI
-- [ ] Descargas concurrentes
-
----
-
 ## 🤝 Contribuir
 
 1. Fork el proyecto
@@ -308,12 +290,6 @@ REQUEST_DELAY_MAX=7.0
 
 Software libre. _Forked_ desde [LectulandiaExtractor](https://github.com/Sarrablo/LectulandiaExtractor).
 
----
-
-## 🙏 Agradecimientos
-
-- [Lectulandia](https://ww3.lectulandia.com/) - Literatura en español
-- [Calibre](https://calibre-ebook.com/) - Gestor de ebooks
 
 ---
 
