@@ -23,8 +23,10 @@ El programa permite buscar por autor, género o en un catálogo local indexado, 
 ### 🔧 Robustez
 - **Retry automático** - Reintentos con backoff exponencial
 - **Validación de EPUB** - Verifica integridad de archivos descargados
-- **Anti-duplicados** - Fuzzy matching para evitar descargas repetidas
+- **Anti-duplicados** - Detección vía base de datos + fuzzy matching
 - **Rate limiting** - Delays aleatorios y header rotation para evitar bloqueos
+- **Resume/Checkpoint** - Continúa descargas e indexaciones interrumpidas
+- **Tracking de descargas** - Registro persistente en SQLite
 
 ### 🎨 Interfaz
 - **CLI interactiva** - Menús con `InquirerPy`
@@ -41,11 +43,13 @@ El programa permite buscar por autor, género o en un catálogo local indexado, 
 
 - **httpx** - Cliente HTTP moderno
 - **BeautifulSoup4** - Parsing HTML
+- **SQLite + FTS5** - Base de datos con búsqueda full-text
 - **Rich** - Interfaz de terminal moderna
 - **InquirerPy** - Menús interactivos
 - **rapidfuzz** - Búsqueda fuzzy rápida
 - **Tenacity** - Retry automático
 - **Pydantic** - Configuración validada
+- **pytest** - Testing
 
 ---
 
@@ -95,10 +99,14 @@ sh run.sh
 
 ```
 ? ¿Qué deseas hacer?
-  📝 Buscar por Autor
+  🔍 Buscar en Catálogo (50,000 libros)
   📚 Buscar por Género
+  📝 Buscar por Autor
   ──────────────────────
-  🔍 Buscar en Catálogo (2,500 libros)
+  📊 Estado de descargas
+  ⏯️  Reanudar operación (2 pendientes)
+  📁 Sincronizar descargas
+  ──────────────────────
   🔄 Actualizar Índice (solo nuevos)
   🔁 Reconstruir Índice (desde cero)
   ──────────────────────
@@ -172,6 +180,47 @@ Página 15 ████████████████████ 360 libr
    📄 15 páginas procesadas
 ```
 
+### 📊 Estado y Tracking
+
+**Estado de descargas** - Ver estadísticas de tus descargas:
+
+```
+📊 Estado de Descargas
+
+┌────────────────────────┬──────────┐
+│ Estado                 │ Cantidad │
+├────────────────────────┼──────────┤
+│ ✅ Descargados          │      245 │
+│ ⏭️  Omitidos (duplicados)│       38 │
+│ ❌ Fallidos             │        5 │
+└────────────────────────┴──────────┘
+
+Tasa de éxito: 98.3% (283/288)
+```
+
+**Reanudar operación** - Continúa descargas o indexaciones interrumpidas:
+
+```
+? Seleccionar operación a reanudar
+❯ Descarga por autor: García Márquez - 45/100 (45%)
+  Reconstrucción de índice - 120/500 (24%)
+  ← Cancelar
+```
+
+**Sincronizar descargas** - Registra EPUBs existentes en la base de datos:
+
+```
+📁 Sincronizar Descargas
+
+┌─────────────────────┬──────────┐
+│ Resultado           │ Cantidad │
+├─────────────────────┼──────────┤
+│ 📚 EPUBs encontrados │      156 │
+│ ✅ Nuevos registrados │      142 │
+│ ⏭️  Ya registrados    │       14 │
+└─────────────────────┴──────────┘
+```
+
 ---
 
 ## 📁 Estructura de Archivos
@@ -201,14 +250,20 @@ downloads/
 
 ```
 LectulandiaExtractor/
+├── .github/
+│   └── workflows/
+│       └── ci.yml              # CI con GitHub Actions
 ├── config/
-│   └── settings.py          # Configuración con pydantic
+│   └── settings.py             # Configuración con pydantic
 ├── scripts/
-│   ├── CLI.py               # Interfaz de línea de comandos
-│   ├── extractor.py         # Lógica de descarga
-│   ├── indexer.py           # Indexación del catálogo
-│   ├── searcher.py          # Búsqueda fuzzy
-│   └── calibre_utils.py     # Integración Calibre
+│   ├── CLI.py                  # Interfaz de línea de comandos
+│   ├── extractor.py            # Lógica de descarga
+│   ├── indexer.py              # Indexación del catálogo
+│   ├── searcher.py             # Búsqueda fuzzy
+│   ├── database.py             # SQLite + FTS5 para búsquedas
+│   ├── download_tracker.py     # Tracking de descargas
+│   ├── operations.py           # Checkpoint/Resume
+│   └── calibre_utils.py        # Integración Calibre
 ├── src/
 │   ├── infrastructure/
 │   │   └── http/
@@ -216,10 +271,11 @@ LectulandiaExtractor/
 │   └── utils/
 │       ├── validators.py       # Validación EPUB
 │       └── delays.py           # Rate limiting
+├── tests/                      # Tests con pytest
 ├── data/
-│   └── catalog_index.json   # Índice local (gitignored)
-├── logs/                    # Logs rotativos
-├── .env                     # Tu configuración
+│   └── catalog.db              # Base de datos SQLite (gitignored)
+├── logs/                       # Logs rotativos
+├── .env                        # Tu configuración
 └── README.md
 ```
 
@@ -276,13 +332,31 @@ REQUEST_DELAY_MAX=7.0
 
 ---
 
+## 🧪 Tests
+
+```bash
+# Ejecutar todos los tests
+uv run pytest
+
+# Tests con coverage
+uv run pytest --cov=scripts --cov=src --cov-report=term-missing
+
+# Solo tests específicos
+uv run pytest tests/test_download_tracker.py -v
+```
+
+El proyecto incluye CI con GitHub Actions que ejecuta tests automáticamente en Python 3.12 y 3.13.
+
+---
+
 ## 🤝 Contribuir
 
 1. Fork el proyecto
 2. Crea una rama (`git checkout -b feature/AmazingFeature`)
-3. Commit cambios (`git commit -m 'Add: AmazingFeature'`)
-4. Push (`git push origin feature/AmazingFeature`)
-5. Abre un Pull Request
+3. Ejecuta los tests (`uv run pytest`)
+4. Commit cambios (`git commit -m 'Add: AmazingFeature'`)
+5. Push (`git push origin feature/AmazingFeature`)
+6. Abre un Pull Request
 
 ---
 
