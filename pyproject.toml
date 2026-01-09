@@ -4,24 +4,22 @@ version = "0.2.0"
 description = "Repo para descargar libros en español en formato epub programáticamente desde el dominio Lectulandia."
 readme = "README.md"
 requires-python = ">=3.12"
-
-[project.scripts]
-lectulandia = "scripts.CLI:main"
 dependencies = [
     "click>=8.1.7",
     "loguru>=0.7.3",
     "rapidfuzz>=3.13.0",
     "unidecode>=1.3.8",
-    # Nuevas dependencias - migración a httpx
     "httpx[brotli]>=0.26.0",
     "beautifulsoup4>=4.12.0",
     "lxml>=5.0.0",
     "tenacity>=8.2.0",
     "pydantic-settings>=2.0.0",
     "rich>=13.7.0",
-    # requests solo para Google Books API (simplifica)
-    "requests>=2.31.0",
+    "InquirerPy>=0.3.4",
 ]
+
+[project.scripts]
+lectulandia = "scripts.CLI:main"
 
 [project.optional-dependencies]
 dev = [
